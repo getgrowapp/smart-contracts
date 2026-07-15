@@ -1,0 +1,9 @@
+@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+@openzeppelin/=lib/openzeppelin-contracts/
+forge-std/=lib/forge-std/src/
+vault-v2/=lib/vault-v2/src/
+halmos-cheatcodes/=lib/halmos-cheatcodes/src/
+@erc6900/reference-implementation/=lib/reference-implementation/src/
+@eth-infinitism/account-abstraction/=lib/account-abstraction/contracts/
+@account-abstraction/contracts/=lib/account-abstraction/contracts/
+account-abstraction/=lib/account-abstraction/contracts/
