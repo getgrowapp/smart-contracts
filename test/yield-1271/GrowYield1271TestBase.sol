@@ -75,6 +75,20 @@ abstract contract GrowYield1271TestBase is Test {
     function _setUpBase() internal {
         account = makeAddr("smartAccount");
         module = makeAddr("validationModule");
+        _deployStack();
+
+        vm.prank(account);
+        signer.configure(automation, 0);
+    }
+
+    /**
+     * @dev Deploys the Grow stack (registry, executor, signer) and mock venues with
+     *      their adapters. Callers must set `module` first — the signer pins it as the
+     *      only authorized `isValidSignature` caller. `_setUpBase` uses a synthetic
+     *      address; the E2E suite injects the real ERC-6900 validation module and
+     *      performs `configure` through a UserOperation instead of a prank.
+     */
+    function _deployStack() internal {
         automationPk = uint256(keccak256("automation"));
         automation = vm.addr(automationPk);
 
@@ -92,9 +106,6 @@ abstract contract GrowYield1271TestBase is Test {
         registry.setAdapter(address(aaveAdapter), true, true);
         registry.setAdapter(address(aaveAdapterOther), true, true);
         registry.setAdapter(address(morphoAdapter), true, true);
-
-        vm.prank(account);
-        signer.configure(automation, 0);
     }
 
     function _deployAaveStack(MockUnderlying asset_)
