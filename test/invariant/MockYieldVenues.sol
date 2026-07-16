@@ -55,23 +55,20 @@ contract MockAavePool is IAaveV3Pool {
         aToken = new MockAToken(address(this), address(underlying_));
     }
 
-    function supply(
-        address asset,
-        uint256 amount,
-        address onBehalfOf,
-        uint16
-    ) external override {
+    function supply(address asset, uint256 amount, address onBehalfOf, uint16) external override {
         require(asset == address(underlying), "asset");
         IERC20(asset).transferFrom(msg.sender, address(this), amount);
         aToken.mint(onBehalfOf, amount);
     }
 
-    function withdraw(
-        address asset,
-        uint256 amount,
-        address to
-    ) external override returns (uint256) {
+    function withdraw(address asset, uint256 amount, address to)
+        external
+        override
+        returns (uint256)
+    {
         require(asset == address(underlying), "asset");
+        // Real Aave V3 treats uint256.max as "full balance of msg.sender".
+        if (amount == type(uint256).max) amount = aToken.balanceOf(msg.sender);
         aToken.burn(msg.sender, amount);
         IERC20(asset).transfer(to, amount);
         return amount;

@@ -1,68 +1,105 @@
-# GrowYield EIP-1271 Security Notes (Beta)
+# GrowYield EIP-1271 Security Notes (Adapter architecture, V3/V4)
 
-Frozen scope: `src/yield-1271/` (PolicySigner V3 + Executor V2 + libs) used with Alchemy Modular Account V2 `SingleSignerValidationModule` and an owner-controlled venue registry.
+Scope: `src/yield-1271/` (PolicySigner V4 + Executor V3 + adapters + libs) used with
+Alchemy Modular Account v2 `SingleSignerValidationModule` and an owner-governed
+adapter allowlist.
 
 ## Architecture
 
-1. Smart account installs Alchemy `SingleSignerValidationModule` with the Grow **PolicySigner** as the configured contract signer (`SignatureType.CONTRACT_OWNER`).
+1. Smart account installs Alchemy `SingleSignerValidationModule` with the Grow
+   **PolicySigner** as the configured contract signer (`SignatureType.CONTRACT_OWNER`).
 2. Automation submits ERC-4337 UserOps. Outer signature is `0xFF || 0x01 || abi.encode(Proof)`.
-3. Module calls `PolicySigner.isValidSignature(ethSignedUserOpHash, proof)`.
-4. Proof embeds the **unsigned** UserOp, EntryPoint, expiry, and an EIP-712 automation signature over `(userOpHash, validUntil)`.
-5. Policy allows only `executeBatch` of exactly: `approve(executor,max)` → `executor.{depositAll|withdrawAll|reallocateAll}` → `approve(executor,0)`.
-6. Executor moves **full balances** of the calling account into/out of registry-approved Morpho/Aave venues. Recipient is always `msg.sender` (the smart account) except transient intermediate balances on the executor during `reallocateAll`.
+3. Module calls `PolicySigner.isValidSignature(ethSignedUserOpHash, proof)`. The
+   signer **pins the module address**: any other caller gets `0xffffffff`. This turns
+   Alchemy's version-specific hash wrapping (`toEthSignedMessageHash` in v2.0.1) into
+   an explicit on-chain compatibility declaration — a module upgrade fails closed
+   instead of silently validating the wrong scheme. Off-chain pre-flight `eth_call`s
+   must set `from = validationModule`.
+4. Proof embeds the **unsigned** UserOp, EntryPoint, expiry, and an EIP-712 automation
+   signature over `(userOpHash, validUntil)`. UserOp hashing is the EntryPoint v0.7
+   scheme (see `DEPENDENCIES.md` for the deliberate account-abstraction pin).
+5. Policy allows only the canonical `executeBatch`:
+   `[approve(token_1,max) … approve(token_k,max), executor.execute(ops), approve(token_1,0) … approve(token_k,0)]`
+   where `token_1..k` are exactly the unique source tokens of `ops` in first-appearance
+   order (deposit → `adapter.asset()`, redeem → `adapter.positionToken()`), every
+   spender is the executor, and every adapter is registry-approved for its direction
+   (checked before any staticcall into adapter code). `ops` is capped at 4 and must be
+   canonically ABI-encoded (exact length).
+6. Executor runs each `Operation {adapter, kind, amount}` with funds moving
+   account → adapter → venue → account. `amount` is granular;
+   `type(uint256).max` = full balance.
+
+## Division of enforcement
+
+| Layer | Enforces | Cannot enforce |
+|---|---|---|
+| PolicySigner (validation-time) | calldata shape, targets, approval bracketing, source-token binding, adapter allowlist, automation signature + expiry | anything about execution outcome |
+| Executor (execution-time) | receiver = `msg.sender` (no recipient in ABI), exact-amount receipt (fee-on-transfer fails closed), loss cap `maxLossBps` vs adapter preview, no residual on executor/adapters, reentrancy (transient guard), allowlist re-check | which key authorized the op |
+| Adapters | venue config validation at construction; deposit-time drift re-checks (Aave reserve re-pointing, Morpho child eligibility + liquidity designation) — fail closed; exits never drift-gated — fail open | — |
+
+The executor exists because ERC-4626 `deposit`/`redeem` and Aave `supply`/`withdraw`
+have no min-output parameter: a post-call balance check in the execution path is the
+only place a loss cap can live. Calling venues directly from the account would forfeit it.
 
 ## Trusted components
 
 | Component | Trust assumption |
 |---|---|
-| Alchemy MA v2 + SingleSignerValidationModule | Correct EIP-1271 call with `userOpHash.toEthSignedMessageHash()`; nonce key semantics |
-| Canonical EntryPoint `0x0000000071727De22E5E9d8BAf0edAc6f37da032` | Enforces nonce / UserOp uniqueness |
-| Registry owner | Correct venue metadata (`asset`, `positionToken`, enter/exit flags) |
+| Alchemy MA v2 + SingleSignerValidationModule (pinned) | Correct EIP-1271 call with `userOpHash.toEthSignedMessageHash()`; nonce semantics |
+| Canonical EntryPoint v0.7 `0x00000000717…a032` | Enforces nonce / UserOp uniqueness |
+| Registry owner (Safe/Timelock) | Only allowlists reviewed adapter contracts; adapters are venue-specific and immutable |
+| Adapter bytecode | As deployed; adapters are `onlyExecutor` and hold funds only mid-call |
 | PolicySigner + Executor bytecode | As deployed; no upgrade proxy in this design |
-| Automation EOA/key | Compromised key ⇒ can move **full** balances through allowed venues only |
+| Automation key | Compromise bounded by policy (below); per-account, revocable |
 
-## Registry-owner powers
+## Per-account configuration (why not one global automation key)
 
-- Enable/disable **entry** and **exit** per venue independently.
-- Point `asset` / `positionToken` at venue tokens (misconfiguration can brick or misroute ops).
-- Owner cannot directly withdraw user funds without going through the account’s installed validation path.
+`config[account] = (signer, validUntil)` is each account's consent to a specific
+automation key: per-account expiry, instant revocation (`removeConfiguration`) without
+a module-uninstall UserOp, and per-account key rotation. A single global key would
+give one compromise blast radius over every account. Installing the signer as session
+key consents to the *policy*; `configure` consents to the *key*.
 
 ## Automation-key blast radius
 
-If the configured automation signer is compromised:
+If the configured automation key is compromised, the attacker can authorize
+policy-compliant batches until expiry/revocation. They **cannot**: redirect funds (no
+recipient anywhere in the ABI; outputs always credit the account), use native value,
+call non-executor targets, leave standing allowances, or route through
+non-allowlisted adapters. They **can**: move funds between currently-allowlisted
+venues (including partial amounts) for the account's own benefit, subject to the loss
+cap.
 
-- Attacker can authorize any policy-compliant batch until `config.validUntil` / proof `validUntil` / owner removes configuration / uninstalls module.
-- Attacker **cannot**: set arbitrary recipients, amounts (full-balance only), native value, unsupported selectors, or call non-executor targets via this policy.
-- Attacker **can**: deposit/withdraw/reallocate across **currently enter/exit-enabled** venues for the same underlying (subject to registry).
-
-Mitigations: rotate automation key (`configure`), set short `validUntil`, uninstall SingleSigner entity, disable venue **entry** (preserve exits).
-
-## Supported operations
-
-- `depositAll(protocol, target, asset)`
-- `withdrawAll(protocol, target, assetHint)`
-- `reallocateAll(src…, dst…)` only when `source.asset == destination.asset`
+Mitigations: rotate key (`configure`), short `validUntil`, `removeConfiguration`,
+uninstall the SingleSigner entity, or registry owner disables adapter deposits
+(exits stay open).
 
 ## Invariants (enforced in tests)
 
-- After successful executor ops: executor holds no underlying or position tokens.
-- Withdrawn assets and destination shares credit the smart account (`msg.sender`).
-- Reallocation reverts on underlying mismatch.
-- Policy rejects arbitrary recipient/amount/value/target/selector patterns; executor ABIs omit recipient/amount fields.
-- Successful batches include approve-zero; allowance SCW→executor is zero afterward (policy + handler practice).
-- Invalid / malformed proofs return `0xffffffff` (never EIP-1271 magic); decode failures are caught.
+- Executor and adapters never retain funds after a transaction (stateful invariant +
+  Halmos residual property).
+- All outputs credit `msg.sender`; the ABI has no recipient field.
+- Caller's output delta ≥ `preview * (1 - maxLossBps)` and nonzero, per operation.
+- Policy rejects non-canonical batches (wrong approvals/order/targets/selectors/value,
+  extra or missing approval pairs, >4 ops, non-canonical encoding, unlisted adapters).
+- Invalid/malformed proofs and non-module callers return `0xffffffff`, never revert.
+- Successful batches end with zero allowance account→executor.
 
 ## Known limitations
 
-- Gas estimation must use a **structurally valid** Proof that returns `INVALID` (e.g. hash mismatch). Empty/junk proofs no longer revert, but estimates still understate real validation gas — pin high `verificationGasLimit` and refresh paymaster.
-- Approve token is bound to the operation source token via registry lookup (deposit underlying / withdraw & realloc source position token). Unknown venues revert in policy resolution and map to EIP-1271 invalid.
-- Morpho/Aave venue correctness depends on registry owner diligence and protocol behavior (`maxLossBps` slippage guard).
-- No on-chain automation volume limits or per-tx caps (full balance).
-- Chain ID / EntryPoint binding is via embedded UserOp hash; wrong chain proof is invalid on that chain.
+- Gas estimation must use a structurally valid Proof that returns `INVALID`; estimates
+  still understate real validation gas — pin a high `verificationGasLimit`.
+- A module upgrade by Alchemy (changing the hash wrapping) stops automation silently
+  on-chain (fails closed). Monitor the executor's `Executed` event cadence and alert
+  on unexpected drop; redeploy the signer with the new module address to migrate.
+- Venue solvency/oracle correctness is out of scope; `maxLossBps` bounds per-op
+  slippage vs the venue's own preview, not venue insolvency.
+- No on-chain automation volume limits or per-day caps.
 
 ## Emergency: disable new entry, preserve exits
 
-1. Registry owner sets venue `canEnter = false`, leave `canExit = true` (and keep exit metadata intact).
-2. New deposits / reallocations **into** that venue fail at `entryVenue`.
-3. Users (and automation) can still `withdrawAll` / reallocate **out** via `exitVenue`.
-4. Optionally: `PolicySigner.removeConfiguration()` or uninstall the SingleSigner entity to stop automation entirely while owner retains account control.
+1. Registry owner: `setAdapter(adapter, false, true)` — deposits blocked, exits open.
+2. Morpho child turning ineligible or Aave reserve re-pointing blocks deposits
+   automatically (adapter drift checks); exits remain open in both cases.
+3. Per account: `removeConfiguration()` stops automation instantly; the account owner
+   retains full manual control throughout.

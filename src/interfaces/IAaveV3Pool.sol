@@ -7,16 +7,7 @@ pragma solidity ^0.8.24;
  *      (same selectors as Base Pool `0xA238Dd80C259a72e81d7e4664a9801593F98d1c5`).
  */
 interface IAaveV3Pool {
-    function supply(
-        address asset,
-        uint256 amount,
-        address onBehalfOf,
-        uint16 referralCode
-    ) external;
+    function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
 
-    function withdraw(
-        address asset,
-        uint256 amount,
-        address to
-    ) external returns (uint256);
+    function withdraw(address asset, uint256 amount, address to) external returns (uint256);
 }

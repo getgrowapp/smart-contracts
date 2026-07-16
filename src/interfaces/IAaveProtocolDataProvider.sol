@@ -7,9 +7,7 @@ pragma solidity ^0.8.24;
  *      (Base: AaveV3Base.AAVE_PROTOCOL_DATA_PROVIDER).
  */
 interface IAaveProtocolDataProvider {
-    function getReserveTokensAddresses(
-        address asset
-    )
+    function getReserveTokensAddresses(address asset)
         external
         view
         returns (

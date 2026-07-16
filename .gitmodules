@@ -1,0 +1,42 @@
+# Submodule pins are recorded as gitlinks (see `git submodule status`); this file
+# documents the intent behind each pin. Full rationale: DEPENDENCIES.md.
+#
+# After cloning: git submodule update --init
+# (top-level only — nested submodules of reference-implementation are not needed)
+
+# v1.16.2 — latest stable at pin time.
+[submodule "lib/forge-std"]
+	path = lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+
+# v5.6.1 (5fd1781b, lightweight tag) — latest stable. SafeERC20,
+# ReentrancyGuardTransient, EIP712, SignatureChecker, Ownable2Step.
+[submodule "lib/openzeppelin-contracts"]
+	path = lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+
+# tag 2026-07-08 (549b113) — latest tagged release. Interfaces only in the
+# compile graph (IVaultV2, IVaultV2Factory, IMorphoVaultV1Adapter).
+[submodule "lib/vault-v2"]
+	path = lib/vault-v2
+	url = https://github.com/morpho-org/vault-v2
+
+# v0.7.0 (7af70c8) — DELIBERATE HOLD, do not bump casually. EntryPoint v0.8+
+# switched userOp hashing to an EIP-712 domain; GrowUserOpHashLib implements the
+# v0.7 scheme matching the EntryPoint v0.7 that Alchemy Modular Account v2
+# targets. Bumping without a coordinated EntryPoint migration silently desyncs
+# proof hashes (fails closed, bricks automation). See DEPENDENCIES.md.
+[submodule "lib/account-abstraction"]
+	path = lib/account-abstraction
+	url = https://github.com/eth-infinitism/account-abstraction
+
+# v0.8.1 — latest stable ERC-6900 reference. Call struct + executeBatch ABI
+# unchanged from v0.8.0 (interface file renamed to IERC6900Account.sol).
+[submodule "lib/reference-implementation"]
+	path = lib/reference-implementation
+	url = https://github.com/erc6900/reference-implementation
+
+# 6da4e69 — no tagged releases upstream; pinned by commit.
+[submodule "lib/halmos-cheatcodes"]
+	path = lib/halmos-cheatcodes
+	url = https://github.com/a16z/halmos-cheatcodes
