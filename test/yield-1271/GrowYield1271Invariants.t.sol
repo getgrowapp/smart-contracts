@@ -8,13 +8,13 @@ import {
 } from "@eth-infinitism/account-abstraction/interfaces/PackedUserOperation.sol";
 
 import {GrowYield1271TestBase} from "./GrowYield1271TestBase.sol";
-import {GrowYieldExecutorV3} from "../../src/yield-1271/GrowYieldExecutorV3.sol";
+import {GrowYieldExecutorV3} from "../../src/yield-module/GrowYieldExecutorV3.sol";
 import {
     AmountMode,
     IYieldAdapter,
     Operation,
     OperationKind
-} from "../../src/yield-1271/interfaces/IGrowYieldExecutor.sol";
+} from "../../src/yield-module/interfaces/IGrowYieldExecutor.sol";
 
 /// @dev Handler for stateful invariants. Mimics successful policy batches:
 ///      approve-max -> execute -> approve-zero, always as the smart account.

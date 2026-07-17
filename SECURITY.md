@@ -9,7 +9,7 @@ Current security documentation:
   production checklist, and verification coverage.
 - [`docs/VALIDATION-MODULE-ARCHITECTURE.md`](docs/VALIDATION-MODULE-ARCHITECTURE.md) —
   ERC-6900 module architecture, Alchemy nonce routing, onboarding, and execution flow.
-- [`docs/SECURITY-yield-1271.md`](docs/SECURITY-yield-1271.md) — concise security index.
+- [`docs/SECURITY-yield-module.md`](docs/SECURITY-yield-module.md) — concise security index.
 
 Historical beta deployment information is retained only in
 [`docs/BETA-FREEZE-REPORT.md`](docs/BETA-FREEZE-REPORT.md) and must not be used as

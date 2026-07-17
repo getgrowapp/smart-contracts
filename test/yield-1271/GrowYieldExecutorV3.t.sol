@@ -5,20 +5,20 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {GrowYield1271TestBase} from "./GrowYield1271TestBase.sol";
-import {GrowYieldAdapterRegistry} from "../../src/yield-1271/GrowYieldAdapterRegistry.sol";
-import {GrowYieldExecutorV3} from "../../src/yield-1271/GrowYieldExecutorV3.sol";
-import {AaveV3Adapter} from "../../src/yield-1271/adapters/AaveV3Adapter.sol";
-import {MorphoVaultV2Adapter} from "../../src/yield-1271/adapters/MorphoVaultV2Adapter.sol";
+import {GrowYieldAdapterRegistry} from "../../src/yield-module/GrowYieldAdapterRegistry.sol";
+import {GrowYieldExecutorV3} from "../../src/yield-module/GrowYieldExecutorV3.sol";
+import {AaveV3Adapter} from "../../src/yield-module/adapters/AaveV3Adapter.sol";
+import {MorphoVaultV2Adapter} from "../../src/yield-module/adapters/MorphoVaultV2Adapter.sol";
 import {
     AmountMode,
     IGrowYieldExecutor,
     IYieldAdapter,
     Operation,
     OperationKind
-} from "../../src/yield-1271/interfaces/IGrowYieldExecutor.sol";
+} from "../../src/yield-module/interfaces/IGrowYieldExecutor.sol";
 import {
     IGrowYieldAdapterRegistry
-} from "../../src/yield-1271/interfaces/IGrowYieldAdapterRegistry.sol";
+} from "../../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
 import {MockAavePool, MockUnderlying} from "../invariant/MockYieldVenues.sol";
 import {MockFeeToken, MockMutableAaveDataProvider} from "./mocks/MockVaultV2Stack.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";

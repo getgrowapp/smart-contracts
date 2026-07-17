@@ -22,7 +22,7 @@ import {
 } from "@alchemy/modular-account/helpers/ExecutionInstallDelegate.sol";
 
 import {GrowYield1271TestBase} from "./GrowYield1271TestBase.sol";
-import {Operation, OperationKind} from "../../src/yield-1271/interfaces/IGrowYieldExecutor.sol";
+import {Operation, OperationKind} from "../../src/yield-module/interfaces/IGrowYieldExecutor.sol";
 import {
     AlchemySingleSignerValidationModuleHarness
 } from "./mocks/AlchemySingleSignerValidationModuleHarness.sol";

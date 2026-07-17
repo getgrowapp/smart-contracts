@@ -9,15 +9,15 @@ import {
 } from "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
 
 import {GrowYield1271TestBase} from "./GrowYield1271TestBase.sol";
-import {GrowYieldAdapterRegistry} from "../../src/yield-1271/GrowYieldAdapterRegistry.sol";
-import {AaveV3Adapter} from "../../src/yield-1271/adapters/AaveV3Adapter.sol";
-import {MorphoVaultV2Adapter} from "../../src/yield-1271/adapters/MorphoVaultV2Adapter.sol";
+import {GrowYieldAdapterRegistry} from "../../src/yield-module/GrowYieldAdapterRegistry.sol";
+import {AaveV3Adapter} from "../../src/yield-module/adapters/AaveV3Adapter.sol";
+import {MorphoVaultV2Adapter} from "../../src/yield-module/adapters/MorphoVaultV2Adapter.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
 import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
 import {
     IGrowYieldAdapterRegistry
-} from "../../src/yield-1271/interfaces/IGrowYieldAdapterRegistry.sol";
+} from "../../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
 import {MockUnderlying, MockVault} from "../invariant/MockYieldVenues.sol";
 import {
     MockMorphoV1Adapter,

@@ -123,12 +123,12 @@ finite gas/fee ceilings, and `MAX_LOSS_BPS` no greater than 100.
 
 | Path | Purpose |
 |---|---|
-| `src/yield-1271/GrowYieldPolicyModule.sol` | Policy-owner authentication and UserOp constraints |
-| `src/yield-1271/GrowYieldPolicyLib.sol` | Canonical batch policy |
-| `src/yield-1271/GrowYieldExecutorV3.sol` | Amount, budget, output, and incident controls |
-| `src/yield-1271/GrowYieldAdapterRegistry.sol` | Constructor-fixed adapter admission |
-| `src/yield-1271/adapters/` | Aave V3 and Morpho VaultV2 integrations |
-| `test/yield-1271/` | Unit, adversarial, invariant, EntryPoint, fork, and Halmos tests |
+| `src/yield-module/GrowYieldPolicyModule.sol` | Policy-owner authentication and UserOp constraints |
+| `src/yield-module/GrowYieldPolicyLib.sol` | Canonical batch policy |
+| `src/yield-module/GrowYieldExecutorV3.sol` | Amount, budget, output, and incident controls |
+| `src/yield-module/GrowYieldAdapterRegistry.sol` | Constructor-fixed adapter admission |
+| `src/yield-module/adapters/` | Aave V3 and Morpho VaultV2 integrations |
+| `test/yield-module/` | Unit, adversarial, invariant, EntryPoint, fork, and Halmos tests |
 | `script/` | Core, adapter, and fixed-registry deployment scripts |
 
 ## Build and test

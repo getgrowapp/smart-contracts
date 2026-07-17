@@ -4,8 +4,8 @@ pragma solidity 0.8.36;
 import {Script, console2} from "forge-std/Script.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-import {GrowYieldExecutorV3} from "../src/yield-1271/GrowYieldExecutorV3.sol";
-import {GrowYieldPolicyModule} from "../src/yield-1271/GrowYieldPolicyModule.sol";
+import {GrowYieldExecutorV3} from "../src/yield-module/GrowYieldExecutorV3.sol";
+import {GrowYieldPolicyModule} from "../src/yield-module/GrowYieldPolicyModule.sol";
 
 /// @notice Deploys the executor and direct ERC-6900 policy module.
 /// @dev Deploy adapters next, then deploy and attach the fixed registry.
