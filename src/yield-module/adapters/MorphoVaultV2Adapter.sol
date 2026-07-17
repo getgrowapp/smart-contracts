@@ -8,41 +8,44 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IVaultV2} from "vault-v2/interfaces/IVaultV2.sol";
 import {IVaultV2Factory} from "vault-v2/interfaces/IVaultV2Factory.sol";
 import {IMorphoVaultV1Adapter} from "vault-v2/adapters/interfaces/IMorphoVaultV1Adapter.sol";
+import {
+    IMorphoVaultV1AdapterFactory
+} from "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
 
 import {IMorphoVaultEligibility} from "../../interfaces/IMorphoVaultEligibility.sol";
-import {IYieldAdapter} from "../IGrowYield1271.sol";
+import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
-/**
- * @notice Morpho VaultV2 venue adapter for one wrapper vault.
- *
- * @dev The wrapper must be a factory-deployed VaultV2 whose single, liquidity-designated
- *      adapter routes into an eligible Morpho VaultV1 child of the same asset, with
- *      `addAdapter`/`removeAdapter` abdicated so the adapter set can never change.
- *      All of that is validated at construction (ported from GrowYieldRegistryV6's
- *      wrapper validation).
- *
- *      Deposits additionally re-check the mutable subset on every call — child
- *      eligibility (external oracle) and the liquidity-adapter designation — so config
- *      drift after allowlisting fails closed. Redemptions intentionally skip drift
- *      checks: exiting an ineligible venue must always remain possible.
- *
- *      Only the pinned executor may call state-changing methods: the adapter holds
- *      funds transiently mid-call and its accounting assumes the executor's exact
- *      push-then-call sequence.
- */
+/// @title MorphoVaultV2Adapter
+/// @notice Morpho VaultV2 venue adapter for one wrapper vault.
+/// @dev The wrapper must have one factory-authenticated Morpho VaultV1 adapter, a
+///      matching asset, and an immutable adapter set. Deposits re-check child
+///      eligibility, liquidity routing, and the caller's current round-trip gates.
+///      Later gate changes, liquidity, or venue governance can still impair exits.
 contract MorphoVaultV2Adapter is IYieldAdapter {
     using SafeERC20 for IERC20;
 
+    /// @notice The VaultV2 wrapper this adapter deposits into (also the position token).
     IVaultV2 public immutable wrapper;
+
+    /// @notice The Morpho VaultV1 child the wrapper's liquidity adapter routes into.
     address public immutable child;
+
+    /// @notice The wrapper's single designated liquidity adapter, fixed at validation.
     address public immutable liquidityAdapter;
+
+    /// @notice External eligibility oracle re-checked on every deposit (drift check).
     IMorphoVaultEligibility public immutable eligibility;
+
+    /// @notice Sole authorized caller of `deposit` / `redeem`.
     address public immutable executor;
+
+    /// @inheritdoc IYieldAdapter
     address public immutable asset;
 
     error Invalid();
     error OnlyExecutor();
     error VenueDrift();
+    error VenueGate();
     error NonCompliantVault();
     error ResidualBalance();
 
@@ -54,14 +57,14 @@ contract MorphoVaultV2Adapter is IYieldAdapter {
     constructor(
         IVaultV2 wrapper_,
         IVaultV2Factory factory_,
-        address adapterFactory_,
+        IMorphoVaultV1AdapterFactory adapterFactory_,
         IMorphoVaultEligibility eligibility_,
         address executor_
     ) {
         if (
-            address(wrapper_) == address(0) || address(factory_) == address(0)
-                || adapterFactory_ == address(0) || address(eligibility_) == address(0)
-                || executor_ == address(0)
+            address(wrapper_).code.length == 0 || address(factory_).code.length == 0
+                || address(adapterFactory_).code.length == 0
+                || address(eligibility_).code.length == 0 || executor_.code.length == 0
         ) revert Invalid();
 
         if (!factory_.isVaultV2(address(wrapper_))) revert Invalid();
@@ -69,25 +72,27 @@ contract MorphoVaultV2Adapter is IYieldAdapter {
 
         address liquidityAdapter_ = wrapper_.adapters(0);
         if (
-            !wrapper_.isAdapter(liquidityAdapter_)
+            !adapterFactory_.isMorphoVaultV1Adapter(liquidityAdapter_)
+                || !wrapper_.isAdapter(liquidityAdapter_)
                 || wrapper_.liquidityAdapter() != liquidityAdapter_
                 || wrapper_.liquidityData().length != 0
         ) revert Invalid();
 
         IMorphoVaultV1Adapter morphoAdapter = IMorphoVaultV1Adapter(liquidityAdapter_);
         if (
-            morphoAdapter.factory() != adapterFactory_
+            morphoAdapter.factory() != address(adapterFactory_)
                 || morphoAdapter.parentVault() != address(wrapper_)
         ) revert Invalid();
 
         address child_ = morphoAdapter.morphoVaultV1();
-        if (!factory_.isVaultV2(child_) || !eligibility_.isEligibleVault(child_)) {
+        if (child_.code.length == 0 || !eligibility_.isEligibleVault(child_)) {
             revert Invalid();
         }
 
         address asset_ = IERC4626(address(wrapper_)).asset();
         if (
-            asset_ != IERC4626(child_).asset() || !wrapper_.abdicated(IVaultV2.addAdapter.selector)
+            asset_.code.length == 0 || asset_ != IERC4626(child_).asset()
+                || !wrapper_.abdicated(IVaultV2.addAdapter.selector)
                 || !wrapper_.abdicated(IVaultV2.removeAdapter.selector)
         ) revert Invalid();
 
@@ -116,7 +121,7 @@ contract MorphoVaultV2Adapter is IYieldAdapter {
 
     /// @inheritdoc IYieldAdapter
     function deposit(uint256 assets, address receiver) external onlyExecutor returns (uint256) {
-        _checkDrift();
+        _checkDeposit(receiver);
 
         IERC4626 vault = IERC4626(address(wrapper));
         uint256 balanceBefore = IERC20(asset).balanceOf(address(this));
@@ -141,6 +146,9 @@ contract MorphoVaultV2Adapter is IYieldAdapter {
 
     /// @inheritdoc IYieldAdapter
     function redeem(uint256 shares, address receiver) external onlyExecutor returns (uint256) {
+        if (!wrapper.canSendShares(address(this)) || !wrapper.canReceiveAssets(receiver)) {
+            revert VenueGate();
+        }
         uint256 sharesBefore = IERC20(address(wrapper)).balanceOf(address(this));
 
         uint256 assetsOut = IERC4626(address(wrapper)).redeem(shares, receiver, address(this));
@@ -153,15 +161,16 @@ contract MorphoVaultV2Adapter is IYieldAdapter {
         return assetsOut;
     }
 
-    /**
-     * @dev Re-checks the post-construction-mutable venue config on deposit. The adapter
-     *      set itself cannot change (add/removeAdapter abdicated, verified in the
-     *      constructor), but the liquidity designation and external eligibility can.
-     */
-    function _checkDrift() private view {
+    /// @dev Re-checks mutable eligibility and liquidity routing before deposits.
+    function _checkDeposit(address receiver) private view {
         if (
             !eligibility.isEligibleVault(child) || wrapper.liquidityAdapter() != liquidityAdapter
                 || wrapper.liquidityData().length != 0
         ) revert VenueDrift();
+        if (
+            !wrapper.canReceiveShares(receiver) || !wrapper.canSendAssets(address(this))
+                || !wrapper.canSendShares(receiver) || !wrapper.canReceiveShares(address(this))
+                || !wrapper.canSendShares(address(this)) || !wrapper.canReceiveAssets(receiver)
+        ) revert VenueGate();
     }
 }

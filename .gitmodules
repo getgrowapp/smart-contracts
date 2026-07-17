@@ -21,17 +21,16 @@
 	path = lib/vault-v2
 	url = https://github.com/morpho-org/vault-v2
 
-# v0.7.0 (7af70c8) — DELIBERATE HOLD, do not bump casually. EntryPoint v0.8+
-# switched userOp hashing to an EIP-712 domain; GrowUserOpHashLib implements the
-# v0.7 scheme matching the EntryPoint v0.7 that Alchemy Modular Account v2
-# targets. Bumping without a coordinated EntryPoint migration silently desyncs
-# proof hashes (fails closed, bricks automation). See DEPENDENCIES.md.
+# v0.7.0 (7af70c8) — DELIBERATE HOLD, do not bump casually. It is the
+# EntryPoint generation targeted by Alchemy Modular Account v2.0.1. Moving to
+# EntryPoint v0.8 changes UserOperation/hash semantics and requires a coordinated
+# account, paymaster, bundler, and encoder migration. See DEPENDENCIES.md.
 [submodule "lib/account-abstraction"]
 	path = lib/account-abstraction
 	url = https://github.com/eth-infinitism/account-abstraction
 
-# v0.8.1 — latest stable ERC-6900 reference. Call struct + executeBatch ABI
-# unchanged from v0.8.0 (interface file renamed to IERC6900Account.sol).
+# v0.8.1 (65892c2) — retained for the local EntryPointUtils test fixture. The
+# production ERC-6900 remapping below uses v0.8.0 to match Alchemy v2.0.1.
 [submodule "lib/reference-implementation"]
 	path = lib/reference-implementation
 	url = https://github.com/erc6900/reference-implementation
@@ -40,3 +39,19 @@
 [submodule "lib/halmos-cheatcodes"]
 	path = lib/halmos-cheatcodes
 	url = https://github.com/a16z/halmos-cheatcodes
+
+# v2.0.1 (efab648) — exact production account implementation used by the
+# compatibility integration test. Do not replace it with the ERC-6900 reference account.
+[submodule "lib/modular-account-v2"]
+	path = lib/modular-account-v2
+	url = https://github.com/alchemyplatform/modular-account
+
+# v0.8.0 package commit c9b256c, recorded by Modular Account v2.0.1's lockfile.
+[submodule "lib/reference-implementation-v080"]
+	path = lib/reference-implementation-v080
+	url = https://github.com/erc6900/reference-implementation
+
+# v0.0.237 package commit 24b6272, recorded by Modular Account v2.0.1's lockfile.
+[submodule "lib/solady-v00237"]
+	path = lib/solady-v00237
+	url = https://github.com/Vectorized/solady

@@ -3,72 +3,55 @@ pragma solidity 0.8.36;
 
 import {
     Call,
-    IERC6900Account
-} from "@erc6900/reference-implementation/interfaces/IERC6900Account.sol";
+    IModularAccount
+} from "@erc6900/reference-implementation/interfaces/IModularAccount.sol";
 
-import {
-    IGrowYieldAdapterRegistry,
-    IGrowYieldExecutor,
-    IYieldAdapter,
-    Operation,
-    OperationKind
-} from "./IGrowYield1271.sol";
+import {IGrowYieldExecutor, Operation} from "./interfaces/IGrowYieldExecutor.sol";
 
-/**
- * @notice Static calldata policy for Grow yield automation batches.
- *
- * @dev Because every venue hides behind the uniform `IYieldAdapter` interface, one
- *      decode routine validates every flow (deposit, redeem, reallocation, multi-venue
- *      rebalance) — there is no per-protocol branch.
- *
- *      The only batch shape accepted is the canonical form
- *
- *          [approve(token_1, max) ... approve(token_k, max),
- *           executor.execute(ops),
- *           approve(token_1, 0) ... approve(token_k, 0)]
- *
- *      where `token_1..token_k` are exactly the unique source tokens of `ops` in order
- *      of first appearance (deposit -> `adapter.asset()`, redeem ->
- *      `adapter.positionToken()`). Every approval names the executor as spender; the
- *      trailing zero-approvals guarantee no standing allowance survives the batch.
- *
- *      Adapters are checked against the executor's registry *before* any staticcall
- *      into them, so only governance-approved code is ever consulted during signature
- *      validation. Adapter `asset()`/`positionToken()` are immutables, keeping
- *      validation-phase state access minimal (ERC-7562-friendly).
- *
- *      Amounts inside `ops` are intentionally unconstrained: the executor pins the
- *      output receiver to the account and enforces the loss cap, so amount choice
- *      cannot redirect or burn funds (granular partial deposits are a feature).
- *
- *      Callers must wrap in try/catch — malformed calldata reverts on `abi.decode`;
- *      the policy signer maps reverts to EIP-1271 invalid.
- */
+/// @notice Static calldata policy for Grow yield automation batches.
+/// @dev Accepts only the canonical form:
+///
+///          [approve(token_1, max) ... approve(token_k, max),
+///           executor.execute(ops),
+///           approve(token_1, 0) ... approve(token_k, 0)]
+///
+///      Tokens are the unique declared operation source tokens in first-appearance
+///      order. The executor verifies each declaration before transferring funds.
+///      Malformed ABI reverts; the validation module contains it with a self-call.
 library GrowYieldPolicyLib {
     /// @dev Validation-phase gas bound; covers deposit, withdraw, reallocate, and
     ///      small multi-venue rebalances.
     uint256 internal constant MAX_OPS = 4;
 
+    uint256 private constant MAX_CALLDATA_LENGTH = 7_000;
+
     bytes4 private constant APPROVE = bytes4(keccak256("approve(address,uint256)"));
 
-    function isAllowed(
-        address account,
-        address executor,
-        IGrowYieldAdapterRegistry registry,
-        bytes memory callData
-    ) internal view returns (bool) {
-        if (callData.length < 4 || _selector(callData) != IERC6900Account.executeBatch.selector) return false;
+    function isAllowed(address account, address executor, bytes memory callData)
+        internal
+        pure
+        returns (bool)
+    {
+        if (
+            callData.length < 4 || callData.length > MAX_CALLDATA_LENGTH
+                || _selector(callData) != IModularAccount.executeBatch.selector
+        ) return false;
 
         Call[] memory calls = abi.decode(_args(callData), (Call[]));
+        if (keccak256(callData) != keccak256(abi.encodeCall(IModularAccount.executeBatch, (calls))))
+        {
+            return false;
+        }
 
         // Shape: k approve-max calls, one execute call, k approve-zero calls.
         if (calls.length < 3 || calls.length % 2 == 0) return false;
         uint256 approvals = (calls.length - 1) / 2;
+        if (approvals > MAX_OPS) return false;
 
         Operation[] memory ops = _decodeExecute(account, executor, calls[approvals]);
         if (ops.length == 0) return false;
 
-        address[] memory tokens = _sourceTokens(registry, ops);
+        address[] memory tokens = _sourceTokens(ops);
         if (tokens.length == 0 || tokens.length != approvals) return false;
 
         for (uint256 i; i < approvals; ++i) {
@@ -102,34 +85,23 @@ library GrowYieldPolicyLib {
 
         // Canonical ABI encoding only: offset word + length word + n static tuples.
         // Rejects oversized buffers that could smuggle unvalidated bytes.
-        if (ops.length == 0 || ops.length > MAX_OPS || args.length != 64 + ops.length * 96) {
+        if (ops.length == 0 || ops.length > MAX_OPS || args.length != 64 + ops.length * 192) {
             return new Operation[](0);
         }
     }
 
-    /**
-     * @dev Unique source tokens of `ops` in order of first appearance. Returns an
-     *      empty array if any adapter is not registry-approved for its direction —
-     *      checked before any staticcall into the adapter.
-     */
-    function _sourceTokens(IGrowYieldAdapterRegistry registry, Operation[] memory ops)
-        private
-        view
-        returns (address[] memory tokens)
-    {
+    /// @dev Returns unique source tokens in first-appearance order, or an empty array
+    ///      if an operation has a zero adapter or source token.
+    function _sourceTokens(Operation[] memory ops) private pure returns (address[] memory tokens) {
         tokens = new address[](ops.length);
         uint256 unique;
 
         for (uint256 i; i < ops.length; ++i) {
             Operation memory op = ops[i];
-            bool isDeposit = op.kind == OperationKind.DEPOSIT;
-
-            if (isDeposit
-                    ? !registry.canDeposit(address(op.adapter))
-                    : !registry.canRedeem(address(op.adapter))) return new address[](0);
-
-            address token = isDeposit ? op.adapter.asset() : op.adapter.positionToken();
-            if (token == address(0)) return new address[](0);
+            address token = op.sourceToken;
+            if (address(op.adapter) == address(0) || token == address(0) || op.minAmountOut == 0) {
+                return new address[](0);
+            }
 
             bool seen;
             for (uint256 j; j < unique; ++j) {
@@ -178,8 +150,15 @@ library GrowYieldPolicyLib {
 
         out = new bytes(data.length - 4);
 
-        for (uint256 i; i < out.length; ++i) {
-            out[i] = data[i + 4];
+        assembly ("memory-safe") {
+            let source := add(data, 36)
+            let destination := add(out, 32)
+            let end := add(destination, mload(out))
+            for {} lt(destination, end) {} {
+                mstore(destination, mload(source))
+                source := add(source, 32)
+                destination := add(destination, 32)
+            }
         }
     }
 }

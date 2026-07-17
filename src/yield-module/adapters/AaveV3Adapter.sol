@@ -6,31 +6,30 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 
 import {IAaveV3Pool} from "../../interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../interfaces/IAaveProtocolDataProvider.sol";
-import {IYieldAdapter} from "../IGrowYield1271.sol";
+import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
-/**
- * @notice Aave V3 venue adapter for one (pool, asset) reserve.
- *
- * @dev aTokens are 1:1 with underlying at mint/burn time, so previews are identity;
- *      interest accrual only ever increases balances. Small mint/burn rounding on the
- *      rebasing aToken is absorbed by the executor's loss cap.
- *
- *      Only the pinned executor may call state-changing methods: the adapter holds
- *      funds transiently mid-call and its accounting assumes the executor's exact
- *      push-then-call sequence.
- *
- *      Reserve drift (Aave governance replacing the reserve's aToken) is re-checked on
- *      every deposit and fails closed. Redemptions intentionally skip the drift check:
- *      exits must remain possible even if the reserve is later reconfigured, and a
- *      stale aToken makes `withdraw` fail on its own.
- */
+/// @title AaveV3Adapter
+/// @notice Aave V3 venue adapter for one (pool, asset) reserve.
+/// @dev Only the executor may deposit or redeem. Deposits verify the reserve's current
+///      aToken; redemptions use the pinned pool and token without that drift check.
+///      Previews are identity because Aave mints and burns aTokens at par. Withdrawals
+///      remain subject to Aave liquidity and governance controls.
 contract AaveV3Adapter is IYieldAdapter {
     using SafeERC20 for IERC20;
 
+    /// @notice Aave V3 pool this adapter supplies to / withdraws from.
     IAaveV3Pool public immutable pool;
+
+    /// @notice Aave data provider used to re-derive the reserve's aToken (drift check).
     IAaveProtocolDataProvider public immutable dataProvider;
+
+    /// @notice Sole authorized caller of `deposit` / `redeem`.
     address public immutable executor;
+
+    /// @inheritdoc IYieldAdapter
     address public immutable asset;
+
+    /// @inheritdoc IYieldAdapter
     address public immutable positionToken;
 
     error Invalid();
@@ -50,12 +49,12 @@ contract AaveV3Adapter is IYieldAdapter {
         address executor_
     ) {
         if (
-            address(pool_) == address(0) || address(dataProvider_) == address(0)
-                || asset_ == address(0) || executor_ == address(0)
+            address(pool_).code.length == 0 || address(dataProvider_).code.length == 0
+                || asset_.code.length == 0 || executor_.code.length == 0
         ) revert Invalid();
 
         (address aToken,,) = dataProvider_.getReserveTokensAddresses(asset_);
-        if (aToken == address(0)) revert Invalid();
+        if (aToken.code.length == 0 || aToken == asset_) revert Invalid();
 
         pool = pool_;
         dataProvider = dataProvider_;
@@ -93,14 +92,15 @@ contract AaveV3Adapter is IYieldAdapter {
     }
 
     /// @inheritdoc IYieldAdapter
-    function redeem(uint256, address receiver) external onlyExecutor returns (uint256) {
-        // Withdraw the adapter's entire aToken balance (the executor pushed exactly the
-        // redeem amount). `type(uint256).max` is Aave's full-balance sentinel; it avoids
-        // 1-wei index-rounding dust sticking to the adapter and sweeps any aToken
-        // donations out instead of bricking on a strict residual check.
-        uint256 withdrawn = pool.withdraw(asset, type(uint256).max, receiver);
+    function redeem(uint256 shares, address receiver) external onlyExecutor returns (uint256) {
+        uint256 sharesBefore = IERC20(positionToken).balanceOf(address(this));
+        uint256 withdrawn = pool.withdraw(asset, shares, receiver);
 
-        if (IERC20(positionToken).balanceOf(address(this)) != 0) revert ResidualBalance();
+        // Consume exactly the caller-attributed position amount. Pre-existing donations
+        // are deliberately not swept into an unrelated account's redemption.
+        if (IERC20(positionToken).balanceOf(address(this)) != sharesBefore - shares) {
+            revert ResidualBalance();
+        }
 
         return withdrawn;
     }

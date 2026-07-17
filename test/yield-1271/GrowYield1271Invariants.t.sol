@@ -3,15 +3,21 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {
+    PackedUserOperation
+} from "@eth-infinitism/account-abstraction/interfaces/PackedUserOperation.sol";
 
 import {GrowYield1271TestBase} from "./GrowYield1271TestBase.sol";
 import {GrowYieldExecutorV3} from "../../src/yield-1271/GrowYieldExecutorV3.sol";
-import {IYieldAdapter, Operation, OperationKind} from "../../src/yield-1271/IGrowYield1271.sol";
+import {
+    AmountMode,
+    IYieldAdapter,
+    Operation,
+    OperationKind
+} from "../../src/yield-1271/interfaces/IGrowYieldExecutor.sol";
 
-/**
- * @dev Handler for stateful invariants. Mimics successful policy batches:
- *      approve-max -> execute -> approve-zero, always as the smart account.
- */
+/// @dev Handler for stateful invariants. Mimics successful policy batches:
+///      approve-max -> execute -> approve-zero, always as the smart account.
 contract GrowYield1271Handler is Test {
     GrowYieldExecutorV3 public immutable executor;
     address public immutable account;
@@ -48,7 +54,10 @@ contract GrowYield1271Handler is Test {
                 Operation({
                     adapter: useAave ? aaveAdapter : morphoAdapter,
                     kind: OperationKind.DEPOSIT,
-                    amount: amount
+                    sourceToken: underlying,
+                    amount: amount,
+                    amountMode: AmountMode.EXACT,
+                    minAmountOut: 1
                 })
             )
         );
@@ -66,7 +75,10 @@ contract GrowYield1271Handler is Test {
                 Operation({
                     adapter: useAave ? aaveAdapter : morphoAdapter,
                     kind: OperationKind.REDEEM,
-                    amount: amount
+                    sourceToken: position,
+                    amount: amount,
+                    amountMode: AmountMode.EXACT,
+                    minAmountOut: 1
                 })
             )
         );
@@ -80,12 +92,18 @@ contract GrowYield1271Handler is Test {
         ops[0] = Operation({
             adapter: aaveToMorpho ? aaveAdapter : morphoAdapter,
             kind: OperationKind.REDEEM,
-            amount: type(uint256).max
+            sourceToken: sourcePosition,
+            amount: 0,
+            amountMode: AmountMode.FULL_BALANCE,
+            minAmountOut: 1
         });
         ops[1] = Operation({
             adapter: aaveToMorpho ? morphoAdapter : aaveAdapter,
             kind: OperationKind.DEPOSIT,
-            amount: type(uint256).max
+            sourceToken: underlying,
+            amount: 0,
+            amountMode: AmountMode.PREVIOUS_OUTPUT,
+            minAmountOut: 1
         });
 
         vm.startPrank(account);
@@ -141,8 +159,9 @@ contract GrowYield1271Invariants is GrowYield1271TestBase {
 
     /// @dev The executor and adapters are pure pass-throughs: no balance survives a tx.
     function invariant_noFundsStrandedInExecutorOrAdapters() public view {
-        address[4] memory holders =
-            [address(executor), address(aaveAdapter), address(morphoAdapter), address(signer)];
+        address[4] memory holders = [
+            address(executor), address(aaveAdapter), address(morphoAdapter), address(policyModule)
+        ];
         for (uint256 i; i < holders.length; ++i) {
             assertEq(underlying.balanceOf(holders[i]), 0);
             assertEq(otherUnderlying.balanceOf(holders[i]), 0);
@@ -167,11 +186,10 @@ contract GrowYield1271Invariants is GrowYield1271TestBase {
         assertGt(value, 0);
     }
 
-    /// @dev Junk proofs never validate, from any caller, at any campaign state.
-    function invariant_junkProofNeverMagic() public {
-        assertEq(_isValid(bytes32(0), hex"01"), INVALID);
-        vm.startPrank(makeAddr("rando"));
-        assertTrue(signer.isValidSignature(keccak256("x"), hex"") != MAGIC);
-        vm.stopPrank();
+    /// @dev A malformed policy signature never validates.
+    function invariant_junkSignatureNeverValidates() public {
+        PackedUserOperation memory userOp = _baseUserOp(hex"12345678");
+        userOp.signature = hex"01";
+        assertEq(uint160(_validationResult(userOp, bytes32(0))), 1);
     }
 }

@@ -6,11 +6,17 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {GrowYieldAdapterRegistry} from "../../src/yield-1271/GrowYieldAdapterRegistry.sol";
 import {GrowYieldExecutorV3} from "../../src/yield-1271/GrowYieldExecutorV3.sol";
-import {GrowYield1271PolicySignerV4} from "../../src/yield-1271/GrowYield1271PolicySignerV4.sol";
 import {AaveV3Adapter} from "../../src/yield-1271/adapters/AaveV3Adapter.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
-import {Operation, OperationKind} from "../../src/yield-1271/IGrowYield1271.sol";
+import {
+    AmountMode,
+    Operation,
+    OperationKind
+} from "../../src/yield-1271/interfaces/IGrowYieldExecutor.sol";
+import {
+    IGrowYieldAdapterRegistry
+} from "../../src/yield-1271/interfaces/IGrowYieldAdapterRegistry.sol";
 
 /// @dev Aave V3 address book root; resolves current pool + data provider on fork.
 interface IPoolAddressesProvider {
@@ -18,10 +24,8 @@ interface IPoolAddressesProvider {
     function getPoolDataProvider() external view returns (address);
 }
 
-/**
- * @notice Base mainnet fork: fresh adapter stack against the real Aave V3 USDC reserve.
- * @dev Requires `BASE_RPC_URL`. Skips if unset.
- */
+/// @notice Base mainnet fork: fresh adapter stack against the real Aave V3 USDC reserve.
+/// @dev Requires `BASE_RPC_URL`. Skips if unset.
 contract GrowYield1271ForkTest is Test {
     /// @dev Aave V3 PoolAddressesProvider on Base.
     address internal constant AAVE_ADDRESSES_PROVIDER = 0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D;
@@ -29,11 +33,9 @@ contract GrowYield1271ForkTest is Test {
 
     GrowYieldAdapterRegistry internal registry;
     GrowYieldExecutorV3 internal executor;
-    GrowYield1271PolicySignerV4 internal signer;
     AaveV3Adapter internal adapter;
 
     address internal account;
-    address internal module;
 
     function setUp() public {
         string memory rpc = vm.envOr("BASE_RPC_URL", string(""));
@@ -43,20 +45,23 @@ contract GrowYield1271ForkTest is Test {
         vm.createSelectFork(rpc);
 
         account = makeAddr("account");
-        module = makeAddr("module");
 
         IPoolAddressesProvider provider = IPoolAddressesProvider(AAVE_ADDRESSES_PROVIDER);
 
-        registry = new GrowYieldAdapterRegistry(address(this));
-        executor = new GrowYieldExecutorV3(registry, 50);
-        signer = new GrowYield1271PolicySignerV4(address(executor), module);
+        executor = new GrowYieldExecutorV3(50, address(this));
         adapter = new AaveV3Adapter(
             IAaveV3Pool(provider.getPool()),
             IAaveProtocolDataProvider(provider.getPoolDataProvider()),
             USDC,
             address(executor)
         );
-        registry.setAdapter(address(adapter), true, true);
+        IGrowYieldAdapterRegistry.AdapterConfig[] memory configs =
+            new IGrowYieldAdapterRegistry.AdapterConfig[](1);
+        configs[0] = IGrowYieldAdapterRegistry.AdapterConfig(address(adapter), true, true);
+        registry = new GrowYieldAdapterRegistry(address(executor), configs);
+        executor.initializeRegistry(registry);
+        vm.prank(account);
+        executor.setAdapterPolicy(address(adapter), 1_000_000_000e6, 1_000_000_000e6, 1 days);
     }
 
     function test_fork_depositAndRedeem_realAaveUsdc() public {
@@ -69,8 +74,14 @@ contract GrowYield1271ForkTest is Test {
         IERC20(USDC).approve(address(executor), type(uint256).max);
 
         Operation[] memory ops = new Operation[](1);
-        ops[0] =
-            Operation({adapter: adapter, kind: OperationKind.DEPOSIT, amount: type(uint256).max});
+        ops[0] = Operation({
+            adapter: adapter,
+            kind: OperationKind.DEPOSIT,
+            sourceToken: USDC,
+            amount: 0,
+            amountMode: AmountMode.FULL_BALANCE,
+            minAmountOut: (amount * 9950) / 10_000
+        });
         uint256[] memory out = executor.execute(ops);
 
         assertGe(out[0], (amount * 9950) / 10_000);
@@ -80,8 +91,14 @@ contract GrowYield1271ForkTest is Test {
         IERC20(USDC).approve(address(executor), 0);
         aToken.approve(address(executor), type(uint256).max);
 
-        ops[0] =
-            Operation({adapter: adapter, kind: OperationKind.REDEEM, amount: type(uint256).max});
+        ops[0] = Operation({
+            adapter: adapter,
+            kind: OperationKind.REDEEM,
+            sourceToken: address(aToken),
+            amount: 0,
+            amountMode: AmountMode.FULL_BALANCE,
+            minAmountOut: (amount * 9950) / 10_000
+        });
         out = executor.execute(ops);
         vm.stopPrank();
 
@@ -91,12 +108,8 @@ contract GrowYield1271ForkTest is Test {
         assertEq(aToken.balanceOf(address(adapter)), 0);
     }
 
-    function test_fork_signerModulePin_andNonRevertingInvalid() public {
-        // Junk proof: INVALID (not revert) from the module; INVALID from anyone else.
-        vm.prank(module);
-        assertEq(signer.isValidSignature(bytes32(uint256(1)), hex"01"), bytes4(0xffffffff));
-
-        vm.prank(makeAddr("stranger"));
-        assertEq(signer.isValidSignature(bytes32(uint256(1)), hex"01"), bytes4(0xffffffff));
+    function test_fork_registryRemainsFixed() public view {
+        assertTrue(registry.canDeposit(address(adapter)));
+        assertEq(registry.adapterCodeHash(address(adapter)), address(adapter).codehash);
     }
 }

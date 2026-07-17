@@ -39,19 +39,28 @@ contract MockMorphoV1Adapter {
     }
 }
 
-/**
- * @dev ERC-4626 vault exposing the IVaultV2 surface MorphoVaultV2Adapter validates,
- *      plus fault-injection knobs:
- *      - `haircutBps`: deposit mints (and reports) fewer shares than previewDeposit —
- *        an honest-but-lossy venue for executor loss-cap tests.
- *      - `setLiquidityAdapter` / `setLiquidityData`: post-construction drift.
- */
+/// @dev Registry-backed stand-in for MorphoVaultV1AdapterFactory.
+contract MockMorphoV1AdapterFactory {
+    mapping(address adapter => bool) public isMorphoVaultV1Adapter;
+
+    function create(address parentVault, address child) external returns (address adapter) {
+        adapter = address(new MockMorphoV1Adapter(address(this), parentVault, child));
+        isMorphoVaultV1Adapter[adapter] = true;
+    }
+}
+
+/// @dev Deployed caller used to satisfy the policy signer's module-code check.
+contract MockValidationModule {}
+
+/// @dev ERC-4626 vault exposing the IVaultV2 surface MorphoVaultV2Adapter validates,
+///      with configurable deposit loss and liquidity-routing drift.
 contract MockVaultV2 is ERC4626 {
     address[] private _adapters;
     mapping(address => bool) public isAdapter;
     address public liquidityAdapter;
     bytes private _liquidityData;
     mapping(bytes4 => bool) public abdicated;
+    mapping(bytes4 selector => mapping(address account => bool)) public blockedByGate;
 
     uint256 public haircutBps;
 
@@ -84,6 +93,10 @@ contract MockVaultV2 is ERC4626 {
         haircutBps = bps;
     }
 
+    function setGateBlocked(bytes4 selector, address account, bool blocked) external {
+        blockedByGate[selector][account] = blocked;
+    }
+
     // --- IVaultV2 surface used by MorphoVaultV2Adapter ---
 
     function adaptersLength() external view returns (uint256) {
@@ -96,6 +109,22 @@ contract MockVaultV2 is ERC4626 {
 
     function liquidityData() external view returns (bytes memory) {
         return _liquidityData;
+    }
+
+    function canSendShares(address account) external view returns (bool) {
+        return !blockedByGate[this.canSendShares.selector][account];
+    }
+
+    function canReceiveShares(address account) external view returns (bool) {
+        return !blockedByGate[this.canReceiveShares.selector][account];
+    }
+
+    function canSendAssets(address account) external view returns (bool) {
+        return !blockedByGate[this.canSendAssets.selector][account];
+    }
+
+    function canReceiveAssets(address account) external view returns (bool) {
+        return !blockedByGate[this.canReceiveAssets.selector][account];
     }
 
     // --- fault injection ---

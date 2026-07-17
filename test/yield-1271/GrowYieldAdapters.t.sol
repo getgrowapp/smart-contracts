@@ -4,16 +4,24 @@ pragma solidity ^0.8.24;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IVaultV2} from "vault-v2/interfaces/IVaultV2.sol";
 import {IVaultV2Factory} from "vault-v2/interfaces/IVaultV2Factory.sol";
+import {
+    IMorphoVaultV1AdapterFactory
+} from "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
 
 import {GrowYield1271TestBase} from "./GrowYield1271TestBase.sol";
+import {GrowYieldAdapterRegistry} from "../../src/yield-1271/GrowYieldAdapterRegistry.sol";
 import {AaveV3Adapter} from "../../src/yield-1271/adapters/AaveV3Adapter.sol";
 import {MorphoVaultV2Adapter} from "../../src/yield-1271/adapters/MorphoVaultV2Adapter.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
 import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
+import {
+    IGrowYieldAdapterRegistry
+} from "../../src/yield-1271/interfaces/IGrowYieldAdapterRegistry.sol";
 import {MockUnderlying, MockVault} from "../invariant/MockYieldVenues.sol";
 import {
     MockMorphoV1Adapter,
+    MockMorphoV1AdapterFactory,
     MockMutableAaveDataProvider,
     MockVaultV2
 } from "./mocks/MockVaultV2Stack.sol";
@@ -29,7 +37,7 @@ contract GrowYieldAdaptersTest is GrowYield1271TestBase {
         return new MorphoVaultV2Adapter(
             IVaultV2(wrapper),
             IVaultV2Factory(address(morphoFactory)),
-            morphoAdapterFactory,
+            IMorphoVaultV1AdapterFactory(address(morphoAdapterFactory)),
             IMorphoVaultEligibility(address(morphoEligibility)),
             address(executor)
         );
@@ -39,13 +47,7 @@ contract GrowYieldAdaptersTest is GrowYield1271TestBase {
     function _freshWrapper() internal returns (MockVaultV2 wrapper) {
         wrapper = new MockVaultV2(IERC20(address(underlying)), "W2", "W2");
         morphoFactory.set(address(wrapper), true);
-        wrapper.addMockAdapter(
-            address(
-                new MockMorphoV1Adapter(
-                    morphoAdapterFactory, address(wrapper), address(morphoChild)
-                )
-            )
-        );
+        wrapper.addMockAdapter(morphoAdapterFactory.create(address(wrapper), address(morphoChild)));
         wrapper.setAbdicated(IVaultV2.addAdapter.selector, true);
         wrapper.setAbdicated(IVaultV2.removeAdapter.selector, true);
     }
@@ -87,15 +89,27 @@ contract GrowYieldAdaptersTest is GrowYield1271TestBase {
     function test_rejectsForeignAdapterFactory() public {
         MockVaultV2 wrapper = new MockVaultV2(IERC20(address(underlying)), "W2", "W2");
         morphoFactory.set(address(wrapper), true);
+        MockMorphoV1AdapterFactory rogueFactory = new MockMorphoV1AdapterFactory();
+        wrapper.addMockAdapter(rogueFactory.create(address(wrapper), address(morphoChild)));
+        wrapper.setAbdicated(IVaultV2.addAdapter.selector, true);
+        wrapper.setAbdicated(IVaultV2.removeAdapter.selector, true);
+        vm.expectRevert(MorphoVaultV2Adapter.Invalid.selector);
+        _newMorphoAdapter(address(wrapper));
+    }
+
+    function test_rejectsAdapterSpoofingTrustedFactory() public {
+        MockVaultV2 wrapper = new MockVaultV2(IERC20(address(underlying)), "W2", "W2");
+        morphoFactory.set(address(wrapper), true);
         wrapper.addMockAdapter(
             address(
                 new MockMorphoV1Adapter(
-                    makeAddr("rogueFactory"), address(wrapper), address(morphoChild)
+                    address(morphoAdapterFactory), address(wrapper), address(morphoChild)
                 )
             )
         );
         wrapper.setAbdicated(IVaultV2.addAdapter.selector, true);
         wrapper.setAbdicated(IVaultV2.removeAdapter.selector, true);
+
         vm.expectRevert(MorphoVaultV2Adapter.Invalid.selector);
         _newMorphoAdapter(address(wrapper));
     }
@@ -104,11 +118,7 @@ contract GrowYieldAdaptersTest is GrowYield1271TestBase {
         MockVaultV2 wrapper = new MockVaultV2(IERC20(address(underlying)), "W2", "W2");
         morphoFactory.set(address(wrapper), true);
         wrapper.addMockAdapter(
-            address(
-                new MockMorphoV1Adapter(
-                    morphoAdapterFactory, makeAddr("otherParent"), address(morphoChild)
-                )
-            )
+            morphoAdapterFactory.create(makeAddr("otherParent"), address(morphoChild))
         );
         wrapper.setAbdicated(IVaultV2.addAdapter.selector, true);
         wrapper.setAbdicated(IVaultV2.removeAdapter.selector, true);
@@ -125,17 +135,12 @@ contract GrowYieldAdaptersTest is GrowYield1271TestBase {
 
     function test_rejectsChildAssetMismatch() public {
         MockVault wrongAssetChild = new MockVault(IERC20(address(otherUnderlying)), "C2", "C2");
-        morphoFactory.set(address(wrongAssetChild), true);
         morphoEligibility.set(address(wrongAssetChild), true);
 
         MockVaultV2 wrapper = new MockVaultV2(IERC20(address(underlying)), "W2", "W2");
         morphoFactory.set(address(wrapper), true);
         wrapper.addMockAdapter(
-            address(
-                new MockMorphoV1Adapter(
-                    morphoAdapterFactory, address(wrapper), address(wrongAssetChild)
-                )
-            )
+            morphoAdapterFactory.create(address(wrapper), address(wrongAssetChild))
         );
         wrapper.setAbdicated(IVaultV2.addAdapter.selector, true);
         wrapper.setAbdicated(IVaultV2.removeAdapter.selector, true);
@@ -155,7 +160,7 @@ contract GrowYieldAdaptersTest is GrowYield1271TestBase {
         new MorphoVaultV2Adapter(
             IVaultV2(address(0)),
             IVaultV2Factory(address(morphoFactory)),
-            morphoAdapterFactory,
+            IMorphoVaultV1AdapterFactory(address(morphoAdapterFactory)),
             IMorphoVaultEligibility(address(morphoEligibility)),
             address(executor)
         );
@@ -185,15 +190,40 @@ contract GrowYieldAdaptersTest is GrowYield1271TestBase {
         );
     }
 
-    // --- registry gating on enable ---
+    // --- fixed registry construction ---
 
-    function test_registry_rejectsEnablingNonContract() public {
-        vm.expectRevert();
-        registry.setAdapter(makeAddr("eoa"), true, false);
+    function test_registry_rejectsNonContractAdapter() public {
+        IGrowYieldAdapterRegistry.AdapterConfig[] memory configs =
+            new IGrowYieldAdapterRegistry.AdapterConfig[](1);
+        configs[0] = IGrowYieldAdapterRegistry.AdapterConfig(makeAddr("eoa"), true, false);
+        vm.expectRevert(IGrowYieldAdapterRegistry.Invalid.selector);
+        new GrowYieldAdapterRegistry(address(executor), configs);
     }
 
-    function test_registry_allowsDisablingAnything() public {
-        registry.setAdapter(makeAddr("whatever"), false, false);
-        assertFalse(registry.canDeposit(makeAddr("whatever")));
+    function test_registry_rejectsDuplicateAdapter() public {
+        IGrowYieldAdapterRegistry.AdapterConfig[] memory configs =
+            new IGrowYieldAdapterRegistry.AdapterConfig[](2);
+        configs[0] = IGrowYieldAdapterRegistry.AdapterConfig(address(aaveAdapter), true, true);
+        configs[1] = IGrowYieldAdapterRegistry.AdapterConfig(address(aaveAdapter), true, false);
+        vm.expectRevert(IGrowYieldAdapterRegistry.Invalid.selector);
+        new GrowYieldAdapterRegistry(address(executor), configs);
+    }
+
+    function test_registryHasNoPostDeploymentMutationPath() public {
+        (bool success,) = address(registry)
+            .call(
+                abi.encodeWithSignature(
+                    "setAdapter(address,bool,bool)", address(aaveAdapter), false, false
+                )
+            );
+        assertFalse(success);
+        assertTrue(registry.canDeposit(address(aaveAdapter)));
+    }
+
+    function test_registryEnumeratesFixedAdaptersInConstructorOrder() public view {
+        assertEq(registry.adapterCount(), 3);
+        assertEq(registry.adapterAt(0), address(aaveAdapter));
+        assertEq(registry.adapterAt(1), address(aaveAdapterOther));
+        assertEq(registry.adapterAt(2), address(morphoAdapter));
     }
 }

@@ -3,7 +3,9 @@
 forge-std/=lib/forge-std/src/
 vault-v2/=lib/vault-v2/src/
 halmos-cheatcodes/=lib/halmos-cheatcodes/src/
-@erc6900/reference-implementation/=lib/reference-implementation/src/
+@erc6900/reference-implementation/=lib/reference-implementation-v080/src/
 @eth-infinitism/account-abstraction/=lib/account-abstraction/contracts/
 @account-abstraction/contracts/=lib/account-abstraction/contracts/
 account-abstraction/=lib/account-abstraction/contracts/
+@alchemy/modular-account/=lib/modular-account-v2/src/
+solady/=lib/solady-v00237/src/

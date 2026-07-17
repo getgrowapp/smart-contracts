@@ -3,32 +3,19 @@ pragma solidity ^0.8.24;
 
 import {
     Call,
-    IERC6900Account
-} from "@erc6900/reference-implementation/interfaces/IERC6900Account.sol";
-import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+    IModularAccount
+} from "@erc6900/reference-implementation/interfaces/IModularAccount.sol";
 import {
     PackedUserOperation
 } from "@eth-infinitism/account-abstraction/interfaces/PackedUserOperation.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {GrowYield1271TestBase} from "./GrowYield1271TestBase.sol";
-import {GrowUserOpHashLib} from "../../src/yield-1271/GrowUserOpHashLib.sol";
 import {GrowYieldPolicyLib} from "../../src/yield-1271/GrowYieldPolicyLib.sol";
-import {
-    IGrowYieldAdapterRegistry,
-    Operation,
-    OperationKind
-} from "../../src/yield-1271/IGrowYield1271.sol";
+import {Operation, OperationKind} from "../../src/yield-1271/interfaces/IGrowYieldExecutor.sol";
 
-/**
- * @notice Halmos symbolic properties for the yield-1271 signer + executor.
- *
- * Run:
- *   halmos --contract GrowYield1271HalmosTest
- */
+/// @notice Halmos symbolic properties for the Grow policy module and executor.
 contract GrowYield1271HalmosTest is GrowYield1271TestBase {
-    using MessageHashUtils for bytes32;
-
     function setUp() public {
         _setUpBase();
     }
@@ -38,32 +25,31 @@ contract GrowYield1271HalmosTest is GrowYield1271TestBase {
     }
 
     /// @custom:halmos --solver-timeout-assertion 0
-    function check_shortOrGarbageProof_returnsInvalid(bytes memory junk) public {
-        // Bound to encodings too small to be a well-formed Proof with signature.
-        if (junk.length >= 64) return;
-        assertEq(_isValid(bytes32(uint256(1)), junk), INVALID);
+    function check_shortOrGarbageSignature_returnsInvalid(bytes memory junk) public {
+        if (junk.length == 71) return;
+        PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        userOp.signature = junk;
+        _assertInvalid(userOp, bytes32(uint256(1)));
     }
 
     /// @custom:halmos --solver-timeout-assertion 0
     function check_wrongOuterHash_returnsInvalid(bytes32 wrongHash) public {
         PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
-        bytes32 userOpHash = GrowUserOpHashLib.hash(userOp, ENTRY_POINT, block.chainid);
-        if (wrongHash == userOpHash.toEthSignedMessageHash()) return;
-
-        uint48 validUntil = uint48(block.timestamp + 1 hours);
-        bytes memory proof =
-            _encodeProof(userOp, ENTRY_POINT, validUntil, _signAuth(userOpHash, validUntil));
-        assertEq(_isValid(wrongHash, proof), INVALID);
+        bytes32 userOpHash = keccak256("authorized");
+        if (wrongHash == userOpHash) return;
+        userOp = _authorize(userOp, userOpHash);
+        _assertInvalid(userOp, wrongHash);
     }
 
     /// @custom:halmos --solver-timeout-assertion 0
-    function check_nonModuleCaller_neverValidates(address caller) public {
-        if (caller == module) return;
+    function check_nonAccountCaller_neverValidates(address caller) public {
+        if (caller == account) return;
         PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
-        (bytes memory proof, bytes32 ethHash) = _validProof(userOp);
+        bytes32 userOpHash = keccak256("authorized");
+        userOp = _authorize(userOp, userOpHash);
 
         vm.prank(caller);
-        assertEq(signer.isValidSignature(ethHash, proof), INVALID);
+        assertEq(uint160(policyModule.validateUserOp(POLICY_ENTITY_ID, userOp, userOpHash)), 1);
     }
 
     /// @custom:halmos --solver-timeout-assertion 0
@@ -78,10 +64,7 @@ contract GrowYield1271HalmosTest is GrowYield1271TestBase {
 
         assert(
             !GrowYieldPolicyLib.isAllowed(
-                account,
-                address(executor),
-                IGrowYieldAdapterRegistry(address(registry)),
-                abi.encodeCall(IERC6900Account.executeBatch, (calls))
+                account, address(executor), abi.encodeCall(IModularAccount.executeBatch, (calls))
             )
         );
     }
@@ -97,10 +80,7 @@ contract GrowYield1271HalmosTest is GrowYield1271TestBase {
 
         assert(
             !GrowYieldPolicyLib.isAllowed(
-                account,
-                address(executor),
-                IGrowYieldAdapterRegistry(address(registry)),
-                abi.encodeCall(IERC6900Account.executeBatch, (calls))
+                account, address(executor), abi.encodeCall(IModularAccount.executeBatch, (calls))
             )
         );
     }
