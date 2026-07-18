@@ -4,9 +4,8 @@ pragma solidity ^0.8.24;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IVaultV2} from "vault-v2/interfaces/IVaultV2.sol";
 import {IVaultV2Factory} from "vault-v2/interfaces/IVaultV2Factory.sol";
-import {
-    IMorphoVaultV1AdapterFactory
-} from "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
+import {IMorphoVaultV1AdapterFactory} from
+    "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
 
 import {GrowYield1271TestBase} from "./GrowYield1271TestBase.sol";
 import {GrowYieldAdapterRegistry} from "../../src/yield-module/GrowYieldAdapterRegistry.sol";
@@ -15,9 +14,9 @@ import {MorphoVaultV2Adapter} from "../../src/yield-module/adapters/MorphoVaultV
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
 import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
-import {
-    IGrowYieldAdapterRegistry
-} from "../../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
+import {IGrowYieldAdapterRegistry} from
+    "../../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
+import {IYieldAdapter} from "../../src/yield-module/interfaces/IYieldAdapter.sol";
 import {MockUnderlying, MockVault} from "../invariant/MockYieldVenues.sol";
 import {
     MockMorphoV1Adapter,
@@ -209,13 +208,56 @@ contract GrowYieldAdaptersTest is GrowYield1271TestBase {
         new GrowYieldAdapterRegistry(address(executor), configs);
     }
 
+    function test_registry_rejectsDuplicateVenue() public {
+        // Second adapter contract for the same aToken / asset pair.
+        AaveV3Adapter duplicateVenue = new AaveV3Adapter(
+            IAaveV3Pool(address(aavePool)),
+            IAaveProtocolDataProvider(address(aaveDataProvider)),
+            address(underlying),
+            address(executor)
+        );
+        IGrowYieldAdapterRegistry.AdapterConfig[] memory configs =
+            new IGrowYieldAdapterRegistry.AdapterConfig[](2);
+        configs[0] = IGrowYieldAdapterRegistry.AdapterConfig(address(aaveAdapter), true, true);
+        configs[1] = IGrowYieldAdapterRegistry.AdapterConfig(address(duplicateVenue), true, true);
+        vm.expectRevert(IGrowYieldAdapterRegistry.Invalid.selector);
+        new GrowYieldAdapterRegistry(address(executor), configs);
+    }
+
+    function test_registry_rejectsConflictingAssetPositionPair() public {
+        // Same position token claimed with a different underlying via a rogue adapter.
+        ConflictingVenueAdapter conflict = new ConflictingVenueAdapter(
+            address(executor), address(otherUnderlying), aaveAdapter.positionToken()
+        );
+        IGrowYieldAdapterRegistry.AdapterConfig[] memory configs =
+            new IGrowYieldAdapterRegistry.AdapterConfig[](2);
+        configs[0] = IGrowYieldAdapterRegistry.AdapterConfig(address(aaveAdapter), true, true);
+        configs[1] = IGrowYieldAdapterRegistry.AdapterConfig(address(conflict), true, true);
+        vm.expectRevert(IGrowYieldAdapterRegistry.Invalid.selector);
+        new GrowYieldAdapterRegistry(address(executor), configs);
+    }
+
+    function test_registry_completeness_enumeratesEveryConfiguredAdapter() public view {
+        uint256 count = registry.adapterCount();
+        assertEq(count, 3);
+
+        address[3] memory expected =
+            [address(aaveAdapter), address(aaveAdapterOther), address(morphoAdapter)];
+        for (uint256 i; i < count; ++i) {
+            address adapter = registry.adapterAt(i);
+            assertEq(adapter, expected[i]);
+            assertTrue(registry.canDeposit(adapter) || registry.canRedeem(adapter));
+            assertEq(registry.adapterCodeHash(adapter), adapter.codehash);
+            assertTrue(IYieldAdapter(adapter).asset() != IYieldAdapter(adapter).positionToken());
+        }
+    }
+
     function test_registryHasNoPostDeploymentMutationPath() public {
-        (bool success,) = address(registry)
-            .call(
-                abi.encodeWithSignature(
-                    "setAdapter(address,bool,bool)", address(aaveAdapter), false, false
-                )
-            );
+        (bool success,) = address(registry).call(
+            abi.encodeWithSignature(
+                "setAdapter(address,bool,bool)", address(aaveAdapter), false, false
+            )
+        );
         assertFalse(success);
         assertTrue(registry.canDeposit(address(aaveAdapter)));
     }
@@ -225,5 +267,46 @@ contract GrowYieldAdaptersTest is GrowYield1271TestBase {
         assertEq(registry.adapterAt(0), address(aaveAdapter));
         assertEq(registry.adapterAt(1), address(aaveAdapterOther));
         assertEq(registry.adapterAt(2), address(morphoAdapter));
+    }
+}
+
+/// @dev Reports an arbitrary asset against an existing position token.
+contract ConflictingVenueAdapter is IYieldAdapter {
+    address private immutable _executor;
+    address private immutable _asset;
+    address private immutable _position;
+
+    constructor(address executor_, address asset_, address position_) {
+        _executor = executor_;
+        _asset = asset_;
+        _position = position_;
+    }
+
+    function executor() external view returns (address) {
+        return _executor;
+    }
+
+    function asset() external view returns (address) {
+        return _asset;
+    }
+
+    function positionToken() external view returns (address) {
+        return _position;
+    }
+
+    function previewDeposit(uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function previewRedeem(uint256) external pure returns (uint256) {
+        return 0;
+    }
+
+    function deposit(uint256, address) external pure returns (uint256) {
+        revert();
+    }
+
+    function redeem(uint256, address) external pure returns (uint256) {
+        revert();
     }
 }

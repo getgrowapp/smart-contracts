@@ -31,7 +31,10 @@ flowchart LR
     Guardian["Risk guardian"]
     Aave[AaveV3Adapter]
     Morpho[MorphoVaultV2Adapter]
-    Venues["Aave / Morpho"]
+    EulerEVK[EulerEVaultAdapter]
+    EulerEarn[EulerEarnAdapter]
+    Capy[CapyFiAdapter]
+    Venues["Aave / Morpho / Euler / CapyFi"]
     Paymaster["Pinned sponsor paymaster"]
 
     Owners -->|install, configure, rotate, revoke| Account
@@ -45,8 +48,14 @@ flowchart LR
     Executor --> Registry
     Executor --> Aave
     Executor --> Morpho
+    Executor --> EulerEVK
+    Executor --> EulerEarn
+    Executor --> Capy
     Aave --> Venues
     Morpho --> Venues
+    EulerEVK --> Venues
+    EulerEarn --> Venues
+    Capy --> Venues
     Guardian -->|permanent deposit pause| Executor
 ```
 
@@ -182,6 +191,24 @@ adapter, or block redemptions. This adds incident-response value without giving 
 guardian a withdrawal or migration power. Recovery from a false pause requires a
 new deployment and owner-approved migration.
 
+### Trust boundary: authenticity vs Grow approval
+
+Adapter constructor and per-operation protocol checks answer only:
+
+> “Is this a genuine canonical deployment of the named protocol (Euler factory
+> proxy / Earn vault / CapyFi listed market / Aave reserve / Morpho wrapper)?”
+
+They do **not** answer:
+
+> “Is this vault or market an acceptable Grow yield venue?”
+
+That second decision is made solely by **including the adapter in the
+constructor-fixed `GrowYieldAdapterRegistry`**. The registry is Grow's approval and
+risk-admission layer: which venues exist, which directions are enabled, and which
+runtime code hashes the executor will accept. A factory-authentic Euler vault that
+is absent from the registry cannot be used. Conversely, registry inclusion without
+passing the adapter's authenticity checks fails closed at construction or execution.
+
 ### `GrowYieldAdapterRegistry`
 
 The registry is constructor-only and has no owner or mutation function. It records:
@@ -189,11 +216,14 @@ The registry is constructor-only and has no owner or mutation function. It recor
 - Each adapter in constructor order.
 - Deposit and redeem permissions.
 - Each adapter's deployment-time runtime code hash.
+- Each venue's position token → underlying binding.
 
-Construction verifies the adapter's pinned executor and nonidentical deployed asset
-and position tokens. Enumeration through `adapterCount` and `adapterAt` supports
-monitoring without adding mutation authority. Proxies are still unsuitable: a
-proxy's runtime code hash can stay constant while its implementation changes.
+Construction verifies the adapter's pinned executor, nonidentical deployed asset and
+position tokens, unique adapter addresses, and unique position tokens (duplicate
+venues or conflicting asset/position bindings revert). Enumeration through
+`adapterCount` and `adapterAt` supports monitoring without adding mutation
+authority. Proxies are still unsuitable: a proxy's runtime code hash can stay
+constant while its implementation changes.
 
 ### `AaveV3Adapter`
 
@@ -214,6 +244,85 @@ routing, empty liquidity data, and abdicated adapter-add/remove selectors.
 Deposits re-check child eligibility, liquidity routing, and all required round-trip
 gates. Deposit and redeem verify ERC-4626 receiver deltas and exact source
 consumption. Later governance, gates, liquidity, or losses can still impair exits.
+
+### Euler adapters (`AbstractEulerAdapter`)
+
+Euler EVK (EVault) and Euler Earn both expose ERC-4626 `deposit` / `redeem` with a
+receiver parameter, so Grow shares one immutable execution path in
+`AbstractEulerAdapter`. They do **not** share factory authenticity APIs, so
+protocol-specific subclasses perform only the venue proof:
+
+| Adapter | Pinned contracts | Authenticity proof | Why it proves a valid **protocol** deployment |
+|---|---|---|---|
+| `EulerEVaultAdapter` | EVK `GenericFactory`, EVault, underlying, executor | `factory.isProxy(vault)` and `vault.asset() == asset` | Only proxies created by the pinned EVK factory appear in `isProxy`; a fake ERC-4626 cannot pass. Re-checking `asset()` blocks a factory vault that was wired to a different underlying or later reports a drifted asset. **Not** a Grow risk approval. |
+| `EulerEarnAdapter` | EulerEarnFactory, Earn vault, underlying, executor | `factory.isVault(vault)` and `vault.asset() == asset` | Only CREATE2 vaults registered by the pinned Earn factory return true from `isVault`. Asset re-check prevents binding Grow to the wrong underlying. **Not** a Grow risk approval. |
+
+Both adapters re-run those checks before every deposit and redeem. Deposits use
+`forceApprove`, credit shares **directly** to the smart account via ERC-4626
+`deposit(assets, receiver)`, clear and assert zero vault allowance, require the
+receiver share delta to match, and assert the adapter retained no new shares.
+Redemptions use `redeem(shares, receiver, address(this))` so underlying is sent
+**directly** to the account; the adapter holds shares only because the executor
+transferred the attributed amount in, then consumes exactly that amount and asserts
+no new underlying residual. Pre-existing share donations are not swept.
+
+### `CapyFiAdapter`
+
+CapyFi is Compound-v2 style: `mint` / `redeem` return error codes and credit
+`msg.sender` rather than an arbitrary receiver. The adapter pins the executor,
+canonical Comptroller (Unitroller), caToken, and underlying, then verifies:
+
+| Check | Why it proves a valid **CapyFi protocol** market |
+|---|---|
+| `caToken.comptroller() == pinned Comptroller` | The market still belongs to the pinned risk engine, not a spoofed controller. **Not** a Grow risk approval. |
+| `Comptroller.markets(caToken).isListed == true` | The Comptroller currently admits the market; delisting fails closed. |
+| `caToken.underlying() == pinned asset` | The market cannot silently point at a different ERC-20. |
+
+Non-zero Compound return codes from `mint` / `redeem` revert (`MintFailed` /
+`RedeemFailed`). Deposits `forceApprove` the caToken, mint, clear and assert zero
+allowance, then transfer only the newly minted caTokens to the smart account.
+Redemptions: the executor transfers the exact caToken source amount to the adapter;
+the adapter calls `redeem(shares)`, transfers **all** resulting underlying to the
+account, and on a clean path (no prior donations) finishes with zero caToken,
+underlying, and allowances. Donated caTokens already held by the adapter are not
+swept into another account's redeem.
+
+### Adding adapters: registry vs executor redeploy
+
+The registry is constructor-fixed and has no mutation path. The executor attaches a
+registry exactly once via `initializeRegistry` and then rejects further attachment.
+Every adapter also immutably pins `executor`.
+
+| Deployment state | What must be redeployed |
+|---|---|
+| Executor deployed but `initializeRegistry` not yet called | Deploy the new immutable adapters (pinning that executor), then deploy one complete registry containing the full intended adapter set, then call `initializeRegistry` once. **Registry-only attachment** — the executor bytecode need not change. |
+| Executor already initialized with a registry | The live registry cannot admit new adapters and cannot be swapped. Deploy a **new executor**, new adapters pinned to that executor, a new complete registry, and (because the policy module constructor also pins the executor) a new policy module install on accounts that should use the expanded set. |
+
+#### Live Base status (as of this change)
+
+Historical Base deployments (`GrowYieldExecutorV6` at
+`0x4Ac4BE21D3E285DD3A6c6e9B908fc84aC3E72306` and `GrowYieldExecutor1271V2` at
+`0xDD440Cb9530502dAE4e6a5022e5f1dD2718d5dCE`) already have a registry attached, but
+they are **not** `GrowYieldExecutorV3`. No `GrowYieldExecutorV3` production address
+is recorded in this repository.
+
+Therefore the intended path for the first V3 production stack is the **executor
+stays / registry-once** route:
+
+1. Deploy `GrowYieldExecutorV3` (and `GrowYieldPolicyModule`).
+2. Deploy every intended immutable adapter pinned to that executor (Aave, Morpho,
+   Euler EVK, Euler Earn, CapyFi, …).
+3. Deploy one complete `GrowYieldAdapterRegistry` listing all of them.
+4. Call `initializeRegistry` once from the executor deployer.
+
+Do not attempt to hot-add Euler/CapyFi into the legacy V6/1271 registries.
+
+Greenfield production therefore should include every intended venue in the first
+registry whenever possible. Expanding venues after initialization is an executor-stack
+migration, not a registry hot-add.
+
+Fork-tested venue constructor arguments and authenticity results are recorded in
+[`ADAPTER-DEPLOYMENT-MATRIX.md`](ADAPTER-DEPLOYMENT-MATRIX.md).
 
 ## How Alchemy chooses Grow instead of the owner validator
 
@@ -371,7 +480,7 @@ The suite executes install, policy configuration, entity-specific nonce selectio
 final-segment signature parsing, sponsored validation, deposit, redemption,
 reallocation, replay rejection, and policy-owner revocation against Alchemy's
 pinned v2.0.1 `ModularAccount` source. It also includes unit, adversarial, invariant,
-Halmos-oriented, and optional Base Aave fork tests.
+Halmos-oriented, and optional Base Aave / Euler / CapyFi fork tests.
 
 Production still requires reviewed direct adapter bytecode, verified constructor
 arguments, a non-token-charging sponsor, realistic per-token limits and output floors,

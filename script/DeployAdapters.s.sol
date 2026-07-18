@@ -5,22 +5,29 @@ import {Script, console2} from "forge-std/Script.sol";
 
 import {IVaultV2} from "vault-v2/interfaces/IVaultV2.sol";
 import {IVaultV2Factory} from "vault-v2/interfaces/IVaultV2Factory.sol";
-import {
-    IMorphoVaultV1AdapterFactory
-} from "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
+import {IMorphoVaultV1AdapterFactory} from
+    "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
+
+import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
 import {AaveV3Adapter} from "../src/yield-module/adapters/AaveV3Adapter.sol";
+import {CapyFiAdapter} from "../src/yield-module/adapters/CapyFiAdapter.sol";
+import {EulerEarnAdapter} from "../src/yield-module/adapters/EulerEarnAdapter.sol";
+import {EulerEVaultAdapter} from "../src/yield-module/adapters/EulerEVaultAdapter.sol";
 import {MorphoVaultV2Adapter} from "../src/yield-module/adapters/MorphoVaultV2Adapter.sol";
 import {GrowYieldAdapterRegistry} from "../src/yield-module/GrowYieldAdapterRegistry.sol";
 import {GrowYieldExecutorV3} from "../src/yield-module/GrowYieldExecutorV3.sol";
-import {
-    IGrowYieldAdapterRegistry
-} from "../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
+import {IGrowYieldAdapterRegistry} from
+    "../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
 import {IAaveV3Pool} from "../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../src/interfaces/IAaveProtocolDataProvider.sol";
+import {ICapyFiCaToken} from "../src/interfaces/ICapyFiCaToken.sol";
+import {ICapyFiComptroller} from "../src/interfaces/ICapyFiComptroller.sol";
+import {IEulerEarnFactory} from "../src/interfaces/IEulerEarnFactory.sol";
+import {IEulerEVaultFactory} from "../src/interfaces/IEulerEVaultFactory.sol";
 import {IMorphoVaultEligibility} from "../src/interfaces/IMorphoVaultEligibility.sol";
 
-/// @notice Deploys executor-pinned Aave and Morpho venue adapters.
+/// @notice Deploys executor-pinned venue adapters (Aave, Morpho, Euler, CapyFi).
 contract DeployAdapters is Script {
     function deployAave() external {
         uint256 pk = vm.envUint("PRIVATE_KEY");
@@ -56,6 +63,60 @@ contract DeployAdapters is Script {
         console2.log("asset", adapter.asset());
         console2.log("positionToken", adapter.positionToken());
         console2.log("child", adapter.child());
+    }
+
+    function deployEulerEVault() external {
+        uint256 pk = vm.envUint("PRIVATE_KEY");
+
+        vm.startBroadcast(pk);
+        EulerEVaultAdapter adapter = new EulerEVaultAdapter(
+            IEulerEVaultFactory(vm.envAddress("EULER_EVAULT_FACTORY")),
+            IERC4626(vm.envAddress("EULER_EVAULT")),
+            vm.envAddress("ASSET"),
+            vm.envAddress("EXECUTOR")
+        );
+        vm.stopBroadcast();
+
+        console2.log("EulerEVaultAdapter", address(adapter));
+        console2.log("asset", adapter.asset());
+        console2.log("positionToken", adapter.positionToken());
+        console2.log("factory", address(adapter.factory()));
+    }
+
+    function deployEulerEarn() external {
+        uint256 pk = vm.envUint("PRIVATE_KEY");
+
+        vm.startBroadcast(pk);
+        EulerEarnAdapter adapter = new EulerEarnAdapter(
+            IEulerEarnFactory(vm.envAddress("EULER_EARN_FACTORY")),
+            IERC4626(vm.envAddress("EULER_EARN_VAULT")),
+            vm.envAddress("ASSET"),
+            vm.envAddress("EXECUTOR")
+        );
+        vm.stopBroadcast();
+
+        console2.log("EulerEarnAdapter", address(adapter));
+        console2.log("asset", adapter.asset());
+        console2.log("positionToken", adapter.positionToken());
+        console2.log("factory", address(adapter.factory()));
+    }
+
+    function deployCapyFi() external {
+        uint256 pk = vm.envUint("PRIVATE_KEY");
+
+        vm.startBroadcast(pk);
+        CapyFiAdapter adapter = new CapyFiAdapter(
+            vm.envAddress("EXECUTOR"),
+            ICapyFiComptroller(vm.envAddress("CAPYFI_COMPTROLLER")),
+            ICapyFiCaToken(vm.envAddress("CAPYFI_CATOKEN")),
+            vm.envAddress("ASSET")
+        );
+        vm.stopBroadcast();
+
+        console2.log("CapyFiAdapter", address(adapter));
+        console2.log("asset", adapter.asset());
+        console2.log("positionToken", adapter.positionToken());
+        console2.log("comptroller", address(adapter.comptroller()));
     }
 
     /// @notice Deploys the complete fixed adapter set and attaches it once.

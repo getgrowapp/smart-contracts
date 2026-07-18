@@ -30,7 +30,7 @@ GrowYieldExecutorV3
   ├─ explicit EXACT / FULL_BALANCE / PREVIOUS_OUTPUT modes
   ├─ preview-relative and signed absolute output floors
   ├─ permanent guardian deposit pause; redemptions remain open
-  └─ constructor-fixed registry → direct Aave/Morpho adapters
+  └─ constructor-fixed registry → direct Aave/Morpho/Euler/CapyFi adapters
 ```
 
 The account's ordinary owner validator and Grow are separate validation entities.
@@ -127,7 +127,7 @@ finite gas/fee ceilings, and `MAX_LOSS_BPS` no greater than 100.
 | `src/yield-module/GrowYieldPolicyLib.sol` | Canonical batch policy |
 | `src/yield-module/GrowYieldExecutorV3.sol` | Amount, budget, output, and incident controls |
 | `src/yield-module/GrowYieldAdapterRegistry.sol` | Constructor-fixed adapter admission |
-| `src/yield-module/adapters/` | Aave V3 and Morpho VaultV2 integrations |
+| `src/yield-module/adapters/` | Aave V3, Morpho VaultV2, Euler EVK/Earn, and CapyFi integrations |
 | `test/yield-module/` | Unit, adversarial, invariant, EntryPoint, fork, and Halmos tests |
 | `script/` | Core, adapter, and fixed-registry deployment scripts |
 

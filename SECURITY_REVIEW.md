@@ -1,8 +1,9 @@
 # GrowYield security review
 
 This review covers the contracts, deployment scripts, Alchemy Modular Account v2.0.1
-integration, and Aave V3/Morpho VaultV2 trust boundaries. It records the repository's
-current controls and residual risks; it is not a substitute for an independent audit.
+integration, and Aave V3 / Morpho VaultV2 / Euler EVK+Earn / CapyFi trust boundaries.
+It records the repository's current controls and residual risks; it is not a substitute
+for an independent audit.
 
 ## Executive assessment
 
@@ -172,6 +173,21 @@ destination; recovery requires a new stack and owner-approved migration.
 - New adapter source/output residual balances are forbidden.
 - Aave redemptions withdraw the exact attributed amount rather than the venue's max
   sentinel, so pre-existing adapter donations are not gifted to a later redeemer.
+- Euler EVK/Earn adapters prove factory authenticity (`isProxy` / `isVault`) and
+  re-check `asset()` before every operation; ERC-4626 outputs credit the account
+  directly and leave donated shares unswept.
+- CapyFi adapters prove Comptroller binding, market listing, and underlying match;
+  non-zero Compound return codes revert; mint/redeem outputs are forwarded to the
+  account with zero residual balances and allowances.
+- Factory/Comptroller checks prove protocol authenticity only. Grow approval and
+  risk admission are registry inclusion of a specific adapter for a specific venue.
+- The registry rejects duplicate adapters, duplicate position-token venues, and
+  conflicting asset/position bindings at construction.
+- Because the registry is constructor-fixed and `initializeRegistry` is one-shot,
+  admitting new venues after initialization requires a new executor + adapter +
+  registry stack (and a new policy-module pin), not a registry hot-add. No live
+  `GrowYieldExecutorV3` is recorded on Base; first V3 deploy should attach the
+  complete registry once (executor-stays path).
 - The transient reentrancy guard spans the complete multi-operation batch.
 
 ## External and residual risks
