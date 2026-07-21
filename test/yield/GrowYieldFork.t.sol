@@ -4,19 +4,13 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import {GrowYieldAdapterRegistry} from "../../src/yield-module/GrowYieldAdapterRegistry.sol";
-import {GrowYieldExecutorV3} from "../../src/yield-module/GrowYieldExecutorV3.sol";
-import {AaveV3Adapter} from "../../src/yield-module/adapters/AaveV3Adapter.sol";
+import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
+import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
+import {AaveV3Adapter} from "../../src/adapters/AaveV3Adapter.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
-import {
-    AmountMode,
-    Operation,
-    OperationKind
-} from "../../src/yield-module/interfaces/IGrowYieldExecutor.sol";
-import {
-    IGrowYieldAdapterRegistry
-} from "../../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
+import {AmountMode, Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
+import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 
 /// @dev Aave V3 address book root; resolves current pool + data provider on fork.
 interface IPoolAddressesProvider {
@@ -32,7 +26,7 @@ contract GrowYieldForkTest is Test {
     address internal constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
 
     GrowYieldAdapterRegistry internal registry;
-    GrowYieldExecutorV3 internal executor;
+    GrowYieldExecutor internal executor;
     AaveV3Adapter internal adapter;
 
     address internal account;
@@ -48,7 +42,7 @@ contract GrowYieldForkTest is Test {
 
         IPoolAddressesProvider provider = IPoolAddressesProvider(AAVE_ADDRESSES_PROVIDER);
 
-        executor = new GrowYieldExecutorV3(50, address(this));
+        executor = new GrowYieldExecutor(50, address(this));
         adapter = new AaveV3Adapter(
             IAaveV3Pool(provider.getPool()),
             IAaveProtocolDataProvider(provider.getPoolDataProvider()),

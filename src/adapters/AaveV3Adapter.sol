@@ -4,8 +4,8 @@ pragma solidity 0.8.36;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {IAaveV3Pool} from "../../interfaces/IAaveV3Pool.sol";
-import {IAaveProtocolDataProvider} from "../../interfaces/IAaveProtocolDataProvider.sol";
+import {IAaveV3Pool} from "../interfaces/IAaveV3Pool.sol";
+import {IAaveProtocolDataProvider} from "../interfaces/IAaveProtocolDataProvider.sol";
 import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
 /// @title AaveV3Adapter

@@ -8,18 +8,18 @@ import {
 } from "@eth-infinitism/account-abstraction/interfaces/PackedUserOperation.sol";
 
 import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
-import {GrowYieldExecutorV3} from "../../src/yield-module/GrowYieldExecutorV3.sol";
+import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
 import {
     AmountMode,
     IYieldAdapter,
     Operation,
     OperationKind
-} from "../../src/yield-module/interfaces/IGrowYieldExecutor.sol";
+} from "../../src/interfaces/IGrowYieldExecutor.sol";
 
 /// @dev Handler for stateful invariants. Mimics successful policy batches:
 ///      approve-max -> execute -> approve-zero, always as the smart account.
 contract GrowYieldHandler is Test {
-    GrowYieldExecutorV3 public immutable executor;
+    GrowYieldExecutor public immutable executor;
     address public immutable account;
     address public immutable underlying;
     address public immutable aToken;
@@ -28,7 +28,7 @@ contract GrowYieldHandler is Test {
     address public immutable morphoWrapper;
 
     constructor(
-        GrowYieldExecutorV3 executor_,
+        GrowYieldExecutor executor_,
         address account_,
         address underlying_,
         address aToken_,

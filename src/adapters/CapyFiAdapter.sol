@@ -5,8 +5,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {ICapyFiCaToken} from "../../interfaces/ICapyFiCaToken.sol";
-import {ICapyFiComptroller} from "../../interfaces/ICapyFiComptroller.sol";
+import {ICapyFiCaToken} from "../interfaces/ICapyFiCaToken.sol";
+import {ICapyFiComptroller} from "../interfaces/ICapyFiComptroller.sol";
 import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
 /// @title CapyFiAdapter

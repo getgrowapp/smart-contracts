@@ -1,1 +1,29 @@
-{}
+{
+  "lib/account-abstraction": {
+    "rev": "7af70c8993a6f42973f520ae0752386a5032abe7"
+  },
+  "lib/forge-std": {
+    "rev": "bf647bd6046f2f7da30d0c2bf435e5c76a780c1b"
+  },
+  "lib/halmos-cheatcodes": {
+    "rev": "6da4e692c357ba6d641a2e677a28298cac9f76ab"
+  },
+  "lib/modular-account-v2": {
+    "rev": "efab648bd91f79685571af7fa88171e3c142f2f6"
+  },
+  "lib/openzeppelin-contracts": {
+    "rev": "5fd1781b1454fd1ef8e722282f86f9293cacf256"
+  },
+  "lib/reference-implementation": {
+    "rev": "65892c2dc9464a4ef24e39bed30f0a8140b0c5de"
+  },
+  "lib/reference-implementation-v080": {
+    "rev": "c9b256cfd963a655179fa3cd9ea3f92c73cbfcdd"
+  },
+  "lib/solady-v00237": {
+    "rev": "24b6272d83fba9a4233bafafbcd7f879e3b0948b"
+  },
+  "lib/vault-v2": {
+    "rev": "549b113106e505b83952c7b296622534338d5f92"
+  }
+}

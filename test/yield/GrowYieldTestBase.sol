@@ -16,14 +16,12 @@ import {
     IMorphoVaultV1AdapterFactory
 } from "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
 
-import {GrowYieldPolicyModule} from "../../src/yield-module/GrowYieldPolicyModule.sol";
-import {GrowYieldExecutorV3} from "../../src/yield-module/GrowYieldExecutorV3.sol";
-import {GrowYieldAdapterRegistry} from "../../src/yield-module/GrowYieldAdapterRegistry.sol";
-import {AaveV3Adapter} from "../../src/yield-module/adapters/AaveV3Adapter.sol";
-import {MorphoVaultV2Adapter} from "../../src/yield-module/adapters/MorphoVaultV2Adapter.sol";
-import {
-    IGrowYieldAdapterRegistry
-} from "../../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
+import {GrowYieldPolicyModule} from "../../src/GrowYieldPolicyModule.sol";
+import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
+import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
+import {AaveV3Adapter} from "../../src/adapters/AaveV3Adapter.sol";
+import {MorphoVaultV2Adapter} from "../../src/adapters/MorphoVaultV2Adapter.sol";
+import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
@@ -33,7 +31,7 @@ import {
     IYieldAdapter,
     Operation,
     OperationKind
-} from "../../src/yield-module/interfaces/IGrowYieldExecutor.sol";
+} from "../../src/interfaces/IGrowYieldExecutor.sol";
 import {MockUnderlying, MockVault, MockAavePool} from "../invariant/MockYieldVenues.sol";
 import {
     MockEligibility,
@@ -57,7 +55,7 @@ abstract contract GrowYieldTestBase is Test {
     uint256 internal constant DEFAULT_VOLUME_LIMIT = 1e36;
 
     GrowYieldAdapterRegistry internal registry;
-    GrowYieldExecutorV3 internal executor;
+    GrowYieldExecutor internal executor;
     GrowYieldPolicyModule internal policyModule;
     address internal sponsorPaymaster;
     address internal riskGuardian;
@@ -101,7 +99,7 @@ abstract contract GrowYieldTestBase is Test {
         automation = vm.addr(automationPk);
         riskGuardian = makeAddr("riskGuardian");
 
-        executor = new GrowYieldExecutorV3(MAX_LOSS_BPS, riskGuardian);
+        executor = new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian);
         underlying = new MockUnderlying();
         otherUnderlying = new MockUnderlying();
 

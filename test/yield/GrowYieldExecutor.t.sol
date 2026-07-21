@@ -5,20 +5,18 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
-import {GrowYieldAdapterRegistry} from "../../src/yield-module/GrowYieldAdapterRegistry.sol";
-import {GrowYieldExecutorV3} from "../../src/yield-module/GrowYieldExecutorV3.sol";
-import {AaveV3Adapter} from "../../src/yield-module/adapters/AaveV3Adapter.sol";
-import {MorphoVaultV2Adapter} from "../../src/yield-module/adapters/MorphoVaultV2Adapter.sol";
+import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
+import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
+import {AaveV3Adapter} from "../../src/adapters/AaveV3Adapter.sol";
+import {MorphoVaultV2Adapter} from "../../src/adapters/MorphoVaultV2Adapter.sol";
 import {
     AmountMode,
     IGrowYieldExecutor,
     IYieldAdapter,
     Operation,
     OperationKind
-} from "../../src/yield-module/interfaces/IGrowYieldExecutor.sol";
-import {
-    IGrowYieldAdapterRegistry
-} from "../../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
+} from "../../src/interfaces/IGrowYieldExecutor.sol";
+import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {MockAavePool, MockUnderlying} from "../invariant/MockYieldVenues.sol";
 import {MockFeeToken, MockMutableAaveDataProvider} from "./mocks/MockVaultV2Stack.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
@@ -75,7 +73,7 @@ contract MaliciousYieldAdapter is IYieldAdapter {
 }
 
 /// @notice Executor correctness, venue gating, and quantitative invariants.
-contract GrowYieldExecutorV3Test is GrowYieldTestBase {
+contract GrowYieldExecutorTest is GrowYieldTestBase {
     function setUp() public {
         _setUpBase();
     }
@@ -338,7 +336,7 @@ contract GrowYieldExecutorV3Test is GrowYieldTestBase {
     }
 
     function test_feeOnTransferSource_revertsUnsupportedToken() public {
-        GrowYieldExecutorV3 feeExecutor = new GrowYieldExecutorV3(MAX_LOSS_BPS, riskGuardian);
+        GrowYieldExecutor feeExecutor = new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian);
         MockFeeToken feeToken = new MockFeeToken();
         MockAavePool feePool = new MockAavePool(MockUnderlying(address(feeToken)));
         MockMutableAaveDataProvider feeProvider =

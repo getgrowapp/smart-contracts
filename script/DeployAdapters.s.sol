@@ -11,16 +11,14 @@ import {
 
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
-import {AaveV3Adapter} from "../src/yield-module/adapters/AaveV3Adapter.sol";
-import {CapyFiAdapter} from "../src/yield-module/adapters/CapyFiAdapter.sol";
-import {EulerEarnAdapter} from "../src/yield-module/adapters/EulerEarnAdapter.sol";
-import {EulerEVaultAdapter} from "../src/yield-module/adapters/EulerEVaultAdapter.sol";
-import {MorphoVaultV2Adapter} from "../src/yield-module/adapters/MorphoVaultV2Adapter.sol";
-import {GrowYieldAdapterRegistry} from "../src/yield-module/GrowYieldAdapterRegistry.sol";
-import {GrowYieldExecutorV3} from "../src/yield-module/GrowYieldExecutorV3.sol";
-import {
-    IGrowYieldAdapterRegistry
-} from "../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
+import {AaveV3Adapter} from "../src/adapters/AaveV3Adapter.sol";
+import {CapyFiAdapter} from "../src/adapters/CapyFiAdapter.sol";
+import {EulerEarnAdapter} from "../src/adapters/EulerEarnAdapter.sol";
+import {EulerEVaultAdapter} from "../src/adapters/EulerEVaultAdapter.sol";
+import {MorphoVaultV2Adapter} from "../src/adapters/MorphoVaultV2Adapter.sol";
+import {GrowYieldAdapterRegistry} from "../src/GrowYieldAdapterRegistry.sol";
+import {GrowYieldExecutor} from "../src/GrowYieldExecutor.sol";
+import {IGrowYieldAdapterRegistry} from "../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {IAaveV3Pool} from "../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../src/interfaces/IAaveProtocolDataProvider.sol";
 import {ICapyFiCaToken} from "../src/interfaces/ICapyFiCaToken.sol";
@@ -141,7 +139,7 @@ contract DeployAdapters is Script {
 
         vm.startBroadcast(pk);
         GrowYieldAdapterRegistry registry = new GrowYieldAdapterRegistry(executor, configs);
-        GrowYieldExecutorV3(executor).initializeRegistry(registry);
+        GrowYieldExecutor(executor).initializeRegistry(registry);
         vm.stopBroadcast();
 
         console2.log("GrowYieldAdapterRegistry", address(registry));
