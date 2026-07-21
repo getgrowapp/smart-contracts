@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {GrowYieldDeployer} from "../../script/GrowYieldDeployer.sol";
 import {Deploy} from "../../script/Deploy.s.sol";
@@ -98,15 +99,11 @@ contract DeployTest is Test {
         assertEq(adapters[0], adapterAddr, "adapter addr");
         assertGt(policyModule.code.length, 0, "policy deployed");
 
-        // Registry wired into the executor, with the deployer as the one-time initializer.
+        // Registry wired into the executor, with the deployer as owner.
         assertEq(address(GrowYieldExecutor(executor).registry()), registry, "registry wired");
-        assertEq(
-            GrowYieldExecutor(executor).registryInitializer(), address(deployer), "initializer"
-        );
+        assertEq(GrowYieldExecutor(executor).owner(), address(deployer), "owner");
         assertNotEq(
-            GrowYieldExecutor(executor).registryInitializer(),
-            CREATE2_FACTORY,
-            "CREATE2 factory is initializer"
+            GrowYieldExecutor(executor).owner(), CREATE2_FACTORY, "CREATE2 factory owns executor"
         );
         assertEq(GrowYieldExecutor(executor).riskGuardian(), RISK_GUARDIAN, "risk guardian");
         assertEq(GrowYieldPolicyModule(policyModule).executor(), executor, "policy executor");
@@ -116,7 +113,7 @@ contract DeployTest is Test {
     }
 
     /// @dev A second wiring attempt fails: the registry is one-time and set inside deployStack.
-    function test_deployStack_registryInitializerIsDeployer() public {
+    function test_deployStack_executorOwnerIsDeployer() public {
         bytes memory executorInit = abi.encodePacked(
             type(GrowYieldExecutor).creationCode, abi.encode(uint16(50), RISK_GUARDIAN)
         );
@@ -166,8 +163,10 @@ contract DeployTest is Test {
             registryInit
         );
 
-        // The EOA (this test) is not the initializer; only the deployer is.
-        vm.expectRevert();
+        // The EOA (this test) is not the owner; only the deployer may initialize.
+        vm.expectRevert(
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this))
+        );
         GrowYieldExecutor(executor).initializeRegistry(GrowYieldAdapterRegistry(registry));
     }
 

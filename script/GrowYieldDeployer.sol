@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.36;
 
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+
 import {IGrowYieldExecutor} from "../src/interfaces/IGrowYieldExecutor.sol";
 import {IGrowYieldAdapterRegistry} from "../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {IGrowYieldPolicyModule} from "../src/interfaces/IGrowYieldPolicyModule.sol";
@@ -10,8 +12,8 @@ import {IYieldAdapter} from "../src/interfaces/IYieldAdapter.sol";
 /// @notice Deterministic CREATE2 deployer for the GrowYield stack.
 /// @dev Deployed once at a chain-independent address (salt 0 via the canonical CREATE2
 ///      factory), so the same address serves every environment and chain. Because this
-///      contract is the CREATE2 caller for the executor, it becomes the executor's
-///      immutable `registryInitializer`. `deployStack` therefore deploys the executor,
+///      contract is the CREATE2 caller for the executor, it becomes the executor owner.
+///      `deployStack` therefore deploys the executor,
 ///      policy module, adapters, and registry AND calls `initializeRegistry` inside a
 ///      single transaction, leaving no cross-transaction window in which a foreign
 ///      registry could be wired into the executor.
@@ -58,10 +60,10 @@ contract GrowYieldDeployer {
             address registry
         )
     {
-        // Executor first: this contract is the CREATE2 caller, so it is the executor's
-        // registryInitializer and may perform the one-time registry wiring below.
+        // Executor first: this contract is the CREATE2 caller, so it owns the executor
+        // and may perform the one-time registry wiring below.
         executor = _create2(executorSalt, executorInit);
-        if (IGrowYieldExecutor(executor).registryInitializer() != address(this)) {
+        if (Ownable(executor).owner() != address(this)) {
             revert InvalidAuthority();
         }
 

@@ -345,7 +345,7 @@ contract Deploy is Script {
     // Helpers
     // -------------------------------------------------------------------------
 
-    /// @dev Fail the script if constructor authority was captured by a CREATE2 caller or if any
+    /// @dev Fail the script if constructor authority was captured by the CREATE2 factory or if any
     ///      component was bound to an address other than the explicitly configured authority.
     function _validateAuthorities(
         string memory config,
@@ -357,13 +357,8 @@ contract Deploy is Script {
         address[] memory adapters
     ) internal view {
         GrowYieldExecutor executorContract = GrowYieldExecutor(executor);
-        require(
-            executorContract.registryInitializer() == deployer, "unexpected registry initializer"
-        );
-        require(
-            executorContract.registryInitializer() != CREATE2_FACTORY,
-            "CREATE2 factory is registry initializer"
-        );
+        require(executorContract.owner() == deployer, "unexpected executor owner");
+        require(executorContract.owner() != CREATE2_FACTORY, "CREATE2 factory owns executor");
         require(executorContract.riskGuardian() == expectedRiskGuardian, "wrong risk guardian");
         require(address(executorContract.registry()) == registry, "wrong registry");
 
