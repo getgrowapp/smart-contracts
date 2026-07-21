@@ -111,16 +111,33 @@ incident procedures must revoke the owner or invalidate the nonce.
 
 ## Deployment
 
-1. Deploy `GrowYieldExecutor(maxLossBps, riskGuardian)` and
-   `GrowYieldPolicyModule` with `DeployGrowYield.s.sol`.
-2. Deploy every executor-pinned direct adapter with `DeployAdapters.s.sol`.
-3. Deploy the complete fixed registry and call the executor's one-time
-   `initializeRegistry` from the original executor deployer.
+The stack is deployed deterministically via CREATE2 from a per-environment config in
+`script/config/<env>.json`. A single `run(env)` deploys the executor, policy module, all
+configured adapters, and the fixed registry, and calls the executor's one-time
+`initializeRegistry` in one atomic transaction (via the `GrowYieldDeployer` CREATE2 helper,
+which is the executor's `registryInitializer`, so wiring cannot be front-run in a separate
+transaction).
+
+1. Edit `script/config/<env>.json`: set `executor`/`policyModule` parameters, per-contract
+   `salts`, and the `adapters` set (one entry per venue, each with its own salt and
+   `canDeposit`/`canRedeem`). `maxLossBps` must be no greater than 100.
+2. Broadcast, stamping the source commit:
+
+   ```sh
+   GIT_COMMIT=$(git rev-parse HEAD) \
+   forge script script/Deploy.s.sol --sig "run(string)" staging \
+     --rpc-url "$BASE_RPC_URL" --broadcast --private-key "$PK"
+   ```
+
+3. The run writes `deployments/<env>.json` (addresses, chain id, timestamp, commit).
+   **Commit and push that file** so live addresses are tracked in the repo — see
+   [`deployments/README.md`](deployments/README.md).
 4. Verify all bytecode, constructor parameters, registry enumeration, and code hashes
    before any owner installs the module.
 
-Required production configuration includes `RISK_GUARDIAN`, `REQUIRED_PAYMASTER`,
-finite gas/fee ceilings, and `MAX_LOSS_BPS` no greater than 100.
+Run broadcasts from a controlled/private endpoint: as with any shared CREATE2 factory, an
+observer who copies the pending salts and init codes can occupy the target addresses first;
+a taken address reverts the run and a fresh salt yields a clean redeploy.
 
 ## Repository map
 
