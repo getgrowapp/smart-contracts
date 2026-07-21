@@ -19,8 +19,9 @@ import {
     Operation,
     OperationKind
 } from "../../src/yield-module/interfaces/IGrowYieldExecutor.sol";
-import {IGrowYieldAdapterRegistry} from
-    "../../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
+import {
+    IGrowYieldAdapterRegistry
+} from "../../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
 
 /// @notice Optional Base mainnet fork coverage for Euler EVK, Euler Earn, and CapyFi.
 /// @dev Requires `BASE_RPC_URL`. Skips if unset.

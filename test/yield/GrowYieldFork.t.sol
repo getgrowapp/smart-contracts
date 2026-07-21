@@ -26,7 +26,7 @@ interface IPoolAddressesProvider {
 
 /// @notice Base mainnet fork: fresh adapter stack against the real Aave V3 USDC reserve.
 /// @dev Requires `BASE_RPC_URL`. Skips if unset.
-contract GrowYield1271ForkTest is Test {
+contract GrowYieldForkTest is Test {
     /// @dev Aave V3 PoolAddressesProvider on Base.
     address internal constant AAVE_ADDRESSES_PROVIDER = 0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D;
     address internal constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;

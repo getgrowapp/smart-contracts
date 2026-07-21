@@ -4,18 +4,20 @@ pragma solidity ^0.8.24;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IVaultV2} from "vault-v2/interfaces/IVaultV2.sol";
 import {IVaultV2Factory} from "vault-v2/interfaces/IVaultV2Factory.sol";
-import {IMorphoVaultV1AdapterFactory} from
-    "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
+import {
+    IMorphoVaultV1AdapterFactory
+} from "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
 
-import {GrowYield1271TestBase} from "./GrowYield1271TestBase.sol";
+import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
 import {GrowYieldAdapterRegistry} from "../../src/yield-module/GrowYieldAdapterRegistry.sol";
 import {AaveV3Adapter} from "../../src/yield-module/adapters/AaveV3Adapter.sol";
 import {MorphoVaultV2Adapter} from "../../src/yield-module/adapters/MorphoVaultV2Adapter.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
 import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
-import {IGrowYieldAdapterRegistry} from
-    "../../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
+import {
+    IGrowYieldAdapterRegistry
+} from "../../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
 import {IYieldAdapter} from "../../src/yield-module/interfaces/IYieldAdapter.sol";
 import {MockUnderlying, MockVault} from "../invariant/MockYieldVenues.sol";
 import {
@@ -27,7 +29,7 @@ import {
 
 /// @notice Construction-time venue validation (ported from GrowYieldRegistryV6,
 ///         previously untested) must reject every malformed wrapper configuration.
-contract GrowYieldAdaptersTest is GrowYield1271TestBase {
+contract GrowYieldAdaptersTest is GrowYieldTestBase {
     function setUp() public {
         _setUpBase();
     }
@@ -253,11 +255,12 @@ contract GrowYieldAdaptersTest is GrowYield1271TestBase {
     }
 
     function test_registryHasNoPostDeploymentMutationPath() public {
-        (bool success,) = address(registry).call(
-            abi.encodeWithSignature(
-                "setAdapter(address,bool,bool)", address(aaveAdapter), false, false
-            )
-        );
+        (bool success,) = address(registry)
+            .call(
+                abi.encodeWithSignature(
+                    "setAdapter(address,bool,bool)", address(aaveAdapter), false, false
+                )
+            );
         assertFalse(success);
         assertTrue(registry.canDeposit(address(aaveAdapter)));
     }

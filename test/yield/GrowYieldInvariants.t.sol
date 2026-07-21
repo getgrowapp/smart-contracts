@@ -7,7 +7,7 @@ import {
     PackedUserOperation
 } from "@eth-infinitism/account-abstraction/interfaces/PackedUserOperation.sol";
 
-import {GrowYield1271TestBase} from "./GrowYield1271TestBase.sol";
+import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
 import {GrowYieldExecutorV3} from "../../src/yield-module/GrowYieldExecutorV3.sol";
 import {
     AmountMode,
@@ -18,7 +18,7 @@ import {
 
 /// @dev Handler for stateful invariants. Mimics successful policy batches:
 ///      approve-max -> execute -> approve-zero, always as the smart account.
-contract GrowYield1271Handler is Test {
+contract GrowYieldHandler is Test {
     GrowYieldExecutorV3 public immutable executor;
     address public immutable account;
     address public immutable underlying;
@@ -129,13 +129,13 @@ contract GrowYield1271Handler is Test {
     }
 }
 
-contract GrowYield1271Invariants is GrowYield1271TestBase {
-    GrowYield1271Handler internal handler;
+contract GrowYieldInvariants is GrowYieldTestBase {
+    GrowYieldHandler internal handler;
 
     function setUp() public {
         _setUpBase();
 
-        handler = new GrowYield1271Handler(
+        handler = new GrowYieldHandler(
             executor,
             account,
             address(underlying),

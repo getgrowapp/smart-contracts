@@ -21,7 +21,7 @@ import {
     ExecutionInstallDelegate
 } from "@alchemy/modular-account/helpers/ExecutionInstallDelegate.sol";
 
-import {GrowYield1271TestBase} from "./GrowYield1271TestBase.sol";
+import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
 import {Operation, OperationKind} from "../../src/yield-module/interfaces/IGrowYieldExecutor.sol";
 import {
     AlchemySingleSignerValidationModuleHarness
@@ -29,7 +29,7 @@ import {
 import {MockSponsorPaymaster} from "./mocks/MockSponsorPaymaster.sol";
 
 /// @notice Complete EntryPoint v0.7 lifecycle against Alchemy Modular Account v2.0.1.
-contract GrowYield1271E2ETest is GrowYield1271TestBase, EntryPointUtils {
+contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
     using MessageHashUtils for bytes32;
 
     uint32 internal constant OWNER_ENTITY_ID = 0;

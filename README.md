@@ -11,6 +11,9 @@ per-account limits and output floors, and simulation through the target bundler.
 The complete architecture, contract catalogue, diagrams, entity routing, onboarding,
 and rebalance flow are in
 [`docs/VALIDATION-MODULE-ARCHITECTURE.md`](docs/VALIDATION-MODULE-ARCHITECTURE.md).
+The adapter-by-adapter mapping to protocol documentation, live Base contracts, and
+fork evidence is in
+[`docs/ADAPTER-PROTOCOL-CROSS-REFERENCE.md`](docs/ADAPTER-PROTOCOL-CROSS-REFERENCE.md).
 
 ## Architecture
 
@@ -128,7 +131,7 @@ finite gas/fee ceilings, and `MAX_LOSS_BPS` no greater than 100.
 | `src/yield-module/GrowYieldExecutorV3.sol` | Amount, budget, output, and incident controls |
 | `src/yield-module/GrowYieldAdapterRegistry.sol` | Constructor-fixed adapter admission |
 | `src/yield-module/adapters/` | Aave V3, Morpho VaultV2, Euler EVK/Earn, and CapyFi integrations |
-| `test/yield-module/` | Unit, adversarial, invariant, EntryPoint, fork, and Halmos tests |
+| `test/yield/` | Unit, adversarial, invariant, EntryPoint, fork, and Halmos tests |
 | `script/` | Core, adapter, and fixed-registry deployment scripts |
 
 ## Build and test

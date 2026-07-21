@@ -9,13 +9,13 @@ import {
     PackedUserOperation
 } from "@eth-infinitism/account-abstraction/interfaces/PackedUserOperation.sol";
 
-import {GrowYield1271TestBase} from "./GrowYield1271TestBase.sol";
+import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
 import {IGrowYieldPolicyModule} from "../../src/yield-module/interfaces/IGrowYieldPolicyModule.sol";
 import {BaseModule} from "@erc6900/reference-implementation/modules/BaseModule.sol";
 import {Operation, OperationKind} from "../../src/yield-module/interfaces/IGrowYieldExecutor.sol";
 
 /// @notice Direct ERC-6900 policy validation, owner lifecycle, and policy bounds.
-contract GrowYieldPolicyModuleTest is GrowYield1271TestBase {
+contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
     function setUp() public {
         _setUpBase();
     }
