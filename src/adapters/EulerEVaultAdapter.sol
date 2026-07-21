@@ -3,7 +3,7 @@ pragma solidity 0.8.36;
 
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
-import {IEulerEVaultFactory} from "../../interfaces/IEulerEVaultFactory.sol";
+import {IEulerEVaultFactory} from "../interfaces/IEulerEVaultFactory.sol";
 import {AbstractEulerAdapter} from "./AbstractEulerAdapter.sol";
 
 /// @title EulerEVaultAdapter

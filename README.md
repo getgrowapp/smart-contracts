@@ -28,7 +28,7 @@ Grow policy owner
             ├─ immutable gas/fee/paymaster bounds
             └─ canonical approve/execute/revoke batch policy
 
-GrowYieldExecutorV3
+GrowYieldExecutor
   ├─ account-owned finite directional epoch limits
   ├─ explicit EXACT / FULL_BALANCE / PREVIOUS_OUTPUT modes
   ├─ preview-relative and signed absolute output floors
@@ -111,8 +111,8 @@ incident procedures must revoke the owner or invalidate the nonce.
 
 ## Deployment
 
-1. Deploy `GrowYieldExecutorV3(maxLossBps, riskGuardian)` and
-   `GrowYieldPolicyModule` with `DeployGrowYieldV3.s.sol`.
+1. Deploy `GrowYieldExecutor(maxLossBps, riskGuardian)` and
+   `GrowYieldPolicyModule` with `DeployGrowYield.s.sol`.
 2. Deploy every executor-pinned direct adapter with `DeployAdapters.s.sol`.
 3. Deploy the complete fixed registry and call the executor's one-time
    `initializeRegistry` from the original executor deployer.
@@ -126,11 +126,11 @@ finite gas/fee ceilings, and `MAX_LOSS_BPS` no greater than 100.
 
 | Path | Purpose |
 |---|---|
-| `src/yield-module/GrowYieldPolicyModule.sol` | Policy-owner authentication and UserOp constraints |
-| `src/yield-module/GrowYieldPolicyLib.sol` | Canonical batch policy |
-| `src/yield-module/GrowYieldExecutorV3.sol` | Amount, budget, output, and incident controls |
-| `src/yield-module/GrowYieldAdapterRegistry.sol` | Constructor-fixed adapter admission |
-| `src/yield-module/adapters/` | Aave V3, Morpho VaultV2, Euler EVK/Earn, and CapyFi integrations |
+| `src/GrowYieldPolicyModule.sol` | Policy-owner authentication and UserOp constraints |
+| `src/GrowYieldPolicyLib.sol` | Canonical batch policy |
+| `src/GrowYieldExecutor.sol` | Amount, budget, output, and incident controls |
+| `src/GrowYieldAdapterRegistry.sol` | Constructor-fixed adapter admission |
+| `src/adapters/` | Aave V3, Morpho VaultV2, Euler EVK/Earn, and CapyFi integrations |
 | `test/yield/` | Unit, adversarial, invariant, EntryPoint, fork, and Halmos tests |
 | `script/` | Core, adapter, and fixed-registry deployment scripts |
 

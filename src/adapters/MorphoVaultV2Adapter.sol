@@ -12,7 +12,7 @@ import {
     IMorphoVaultV1AdapterFactory
 } from "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
 
-import {IMorphoVaultEligibility} from "../../interfaces/IMorphoVaultEligibility.sol";
+import {IMorphoVaultEligibility} from "../interfaces/IMorphoVaultEligibility.sol";
 import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
 /// @title MorphoVaultV2Adapter

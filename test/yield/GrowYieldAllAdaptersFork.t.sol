@@ -11,13 +11,13 @@ import {
     IMorphoVaultV1AdapterFactory
 } from "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
 
-import {GrowYieldAdapterRegistry} from "../../src/yield-module/GrowYieldAdapterRegistry.sol";
-import {GrowYieldExecutorV3} from "../../src/yield-module/GrowYieldExecutorV3.sol";
-import {AaveV3Adapter} from "../../src/yield-module/adapters/AaveV3Adapter.sol";
-import {CapyFiAdapter} from "../../src/yield-module/adapters/CapyFiAdapter.sol";
-import {EulerEarnAdapter} from "../../src/yield-module/adapters/EulerEarnAdapter.sol";
-import {EulerEVaultAdapter} from "../../src/yield-module/adapters/EulerEVaultAdapter.sol";
-import {MorphoVaultV2Adapter} from "../../src/yield-module/adapters/MorphoVaultV2Adapter.sol";
+import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
+import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
+import {AaveV3Adapter} from "../../src/adapters/AaveV3Adapter.sol";
+import {CapyFiAdapter} from "../../src/adapters/CapyFiAdapter.sol";
+import {EulerEarnAdapter} from "../../src/adapters/EulerEarnAdapter.sol";
+import {EulerEVaultAdapter} from "../../src/adapters/EulerEVaultAdapter.sol";
+import {MorphoVaultV2Adapter} from "../../src/adapters/MorphoVaultV2Adapter.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
 import {ICapyFiCaToken} from "../../src/interfaces/ICapyFiCaToken.sol";
@@ -29,11 +29,11 @@ import {
     AmountMode,
     Operation,
     OperationKind
-} from "../../src/yield-module/interfaces/IGrowYieldExecutor.sol";
+} from "../../src/interfaces/IGrowYieldExecutor.sol";
 import {
     IGrowYieldAdapterRegistry
-} from "../../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
-import {IYieldAdapter} from "../../src/yield-module/interfaces/IYieldAdapter.sol";
+} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {IYieldAdapter} from "../../src/interfaces/IYieldAdapter.sol";
 
 interface IPoolAddressesProviderAllAdaptersFork {
     function getPool() external view returns (address);
@@ -83,7 +83,7 @@ contract GrowYieldAllAdaptersForkTest is Test {
     // so the test policy must bound raw units above every fixture's full-balance amount.
     uint256 internal constant VOLUME_LIMIT = 1e36;
 
-    GrowYieldExecutorV3 internal executor;
+    GrowYieldExecutor internal executor;
     AaveV3Adapter internal aave;
     MorphoVaultV2Adapter internal morpho;
     EulerEVaultAdapter internal evault;
@@ -97,7 +97,7 @@ contract GrowYieldAllAdaptersForkTest is Test {
         vm.createSelectFork(rpc);
 
         account = makeAddr("allAdaptersAccount");
-        executor = new GrowYieldExecutorV3(50, address(this));
+        executor = new GrowYieldExecutor(50, address(this));
 
         IPoolAddressesProviderAllAdaptersFork aaveProvider =
             IPoolAddressesProviderAllAdaptersFork(AAVE_ADDRESSES_PROVIDER);

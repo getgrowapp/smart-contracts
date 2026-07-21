@@ -4,19 +4,19 @@ pragma solidity 0.8.36;
 import {Script, console2} from "forge-std/Script.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-import {GrowYieldExecutorV3} from "../src/yield-module/GrowYieldExecutorV3.sol";
-import {GrowYieldPolicyModule} from "../src/yield-module/GrowYieldPolicyModule.sol";
+import {GrowYieldExecutor} from "../src/GrowYieldExecutor.sol";
+import {GrowYieldPolicyModule} from "../src/GrowYieldPolicyModule.sol";
 
 /// @notice Deploys the executor and direct ERC-6900 policy module.
 /// @dev Deploy adapters next, then deploy and attach the fixed registry.
-contract DeployGrowYieldV3 is Script {
+contract DeployGrowYield is Script {
     function run() external {
         uint256 pk = vm.envUint("PRIVATE_KEY");
         uint16 maxLossBps = SafeCast.toUint16(vm.envOr("MAX_LOSS_BPS", uint256(50)));
         address riskGuardian = vm.envAddress("RISK_GUARDIAN");
 
         vm.startBroadcast(pk);
-        GrowYieldExecutorV3 executor = new GrowYieldExecutorV3(maxLossBps, riskGuardian);
+        GrowYieldExecutor executor = new GrowYieldExecutor(maxLossBps, riskGuardian);
         GrowYieldPolicyModule policyModule = new GrowYieldPolicyModule(
             address(executor),
             vm.envAddress("REQUIRED_PAYMASTER"),
@@ -30,7 +30,7 @@ contract DeployGrowYieldV3 is Script {
         );
         vm.stopBroadcast();
 
-        console2.log("GrowYieldExecutorV3", address(executor));
+        console2.log("GrowYieldExecutor", address(executor));
         console2.log("GrowYieldPolicyModule", address(policyModule));
         console2.log("requiredPaymaster", policyModule.requiredPaymaster());
         console2.log("maxLossBps", maxLossBps);

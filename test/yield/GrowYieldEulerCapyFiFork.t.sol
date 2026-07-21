@@ -5,11 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
-import {GrowYieldAdapterRegistry} from "../../src/yield-module/GrowYieldAdapterRegistry.sol";
-import {GrowYieldExecutorV3} from "../../src/yield-module/GrowYieldExecutorV3.sol";
-import {CapyFiAdapter} from "../../src/yield-module/adapters/CapyFiAdapter.sol";
-import {EulerEarnAdapter} from "../../src/yield-module/adapters/EulerEarnAdapter.sol";
-import {EulerEVaultAdapter} from "../../src/yield-module/adapters/EulerEVaultAdapter.sol";
+import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
+import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
+import {CapyFiAdapter} from "../../src/adapters/CapyFiAdapter.sol";
+import {EulerEarnAdapter} from "../../src/adapters/EulerEarnAdapter.sol";
+import {EulerEVaultAdapter} from "../../src/adapters/EulerEVaultAdapter.sol";
 import {ICapyFiCaToken} from "../../src/interfaces/ICapyFiCaToken.sol";
 import {ICapyFiComptroller} from "../../src/interfaces/ICapyFiComptroller.sol";
 import {IEulerEarnFactory} from "../../src/interfaces/IEulerEarnFactory.sol";
@@ -18,10 +18,10 @@ import {
     AmountMode,
     Operation,
     OperationKind
-} from "../../src/yield-module/interfaces/IGrowYieldExecutor.sol";
+} from "../../src/interfaces/IGrowYieldExecutor.sol";
 import {
     IGrowYieldAdapterRegistry
-} from "../../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
+} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 
 /// @notice Optional Base mainnet fork coverage for Euler EVK, Euler Earn, and CapyFi.
 /// @dev Requires `BASE_RPC_URL`. Skips if unset.
@@ -36,7 +36,7 @@ contract GrowYieldEulerCapyFiForkTest is Test {
     address internal constant CAPY_COMPTROLLER = 0x00dc4965916e03A734190fA382633657c71f867E;
     address internal constant CAPY_USDC = 0x5aDb71adb317CE975A405e90335068F0aF9F26C7;
 
-    GrowYieldExecutorV3 internal executor;
+    GrowYieldExecutor internal executor;
     address internal account;
 
     function setUp() public {
@@ -46,7 +46,7 @@ contract GrowYieldEulerCapyFiForkTest is Test {
         }
         vm.createSelectFork(rpc);
         account = makeAddr("account");
-        executor = new GrowYieldExecutorV3(50, address(this));
+        executor = new GrowYieldExecutor(50, address(this));
     }
 
     function _enable(address adapter) internal {
@@ -63,7 +63,7 @@ contract GrowYieldEulerCapyFiForkTest is Test {
     }
 
     function _freshExecutor() internal {
-        executor = new GrowYieldExecutorV3(50, address(this));
+        executor = new GrowYieldExecutor(50, address(this));
     }
 
     function _depositRedeem(address adapterAddr, address position) internal {

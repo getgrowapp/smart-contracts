@@ -11,8 +11,8 @@ import {
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
-import {GrowYieldPolicyLib} from "../../src/yield-module/GrowYieldPolicyLib.sol";
-import {Operation, OperationKind} from "../../src/yield-module/interfaces/IGrowYieldExecutor.sol";
+import {GrowYieldPolicyLib} from "../../src/GrowYieldPolicyLib.sol";
+import {Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
 
 /// @notice Halmos symbolic properties for the Grow policy module and executor.
 contract GrowYieldHalmosTest is GrowYieldTestBase {

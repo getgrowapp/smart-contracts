@@ -5,12 +5,12 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Test} from "forge-std/Test.sol";
 
-import {GrowYieldAdapterRegistry} from "../../src/yield-module/GrowYieldAdapterRegistry.sol";
-import {GrowYieldExecutorV3} from "../../src/yield-module/GrowYieldExecutorV3.sol";
-import {AbstractEulerAdapter} from "../../src/yield-module/adapters/AbstractEulerAdapter.sol";
-import {CapyFiAdapter} from "../../src/yield-module/adapters/CapyFiAdapter.sol";
-import {EulerEarnAdapter} from "../../src/yield-module/adapters/EulerEarnAdapter.sol";
-import {EulerEVaultAdapter} from "../../src/yield-module/adapters/EulerEVaultAdapter.sol";
+import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
+import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
+import {AbstractEulerAdapter} from "../../src/adapters/AbstractEulerAdapter.sol";
+import {CapyFiAdapter} from "../../src/adapters/CapyFiAdapter.sol";
+import {EulerEarnAdapter} from "../../src/adapters/EulerEarnAdapter.sol";
+import {EulerEVaultAdapter} from "../../src/adapters/EulerEVaultAdapter.sol";
 import {ICapyFiCaToken} from "../../src/interfaces/ICapyFiCaToken.sol";
 import {ICapyFiComptroller} from "../../src/interfaces/ICapyFiComptroller.sol";
 import {IEulerEarnFactory} from "../../src/interfaces/IEulerEarnFactory.sol";
@@ -21,10 +21,10 @@ import {
     IYieldAdapter,
     Operation,
     OperationKind
-} from "../../src/yield-module/interfaces/IGrowYieldExecutor.sol";
+} from "../../src/interfaces/IGrowYieldExecutor.sol";
 import {
     IGrowYieldAdapterRegistry
-} from "../../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
+} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {MockUnderlying} from "../invariant/MockYieldVenues.sol";
 import {
     MockCapyFiComptroller,
@@ -40,7 +40,7 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
     uint16 internal constant MAX_LOSS_BPS = 50;
     uint256 internal constant DEFAULT_VOLUME_LIMIT = 1e36;
 
-    GrowYieldExecutorV3 internal executor;
+    GrowYieldExecutor internal executor;
     GrowYieldAdapterRegistry internal registry;
 
     MockUnderlying internal underlying;
@@ -62,7 +62,7 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
     function setUp() public {
         account = makeAddr("smartAccount");
         riskGuardian = makeAddr("riskGuardian");
-        executor = new GrowYieldExecutorV3(MAX_LOSS_BPS, riskGuardian);
+        executor = new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian);
         underlying = new MockUnderlying();
         otherUnderlying = new MockUnderlying();
 

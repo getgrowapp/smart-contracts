@@ -16,11 +16,11 @@ import {
 } from "./interfaces/IGrowYieldExecutor.sol";
 import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 
-/// @title GrowYieldExecutorV3
+/// @title GrowYieldExecutor
 /// @notice Routes caller funds through fixed-registry adapters explicitly enabled by that caller.
 /// @dev Operations bind the source token, send output only to the caller, reject transfer-tax
 ///      tokens, enforce a loss-capped preview, and reject adapter code changes and residuals.
-contract GrowYieldExecutorV3 is ReentrancyGuardTransient, IGrowYieldExecutor {
+contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
     using SafeERC20 for IERC20;
 
     uint256 private constant BPS = 10_000;
