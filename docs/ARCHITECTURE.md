@@ -26,7 +26,7 @@ flowchart LR
     Account["Alchemy ModularAccount\nv2.0.1"]
     Policy["GrowYieldPolicyModule"]
     PolicyLib["GrowYieldPolicyLib"]
-    Executor["GrowYieldExecutorV3"]
+    Executor["GrowYieldExecutor"]
     Registry["GrowYieldAdapterRegistry\nconstructor-fixed"]
     Guardian["Risk guardian"]
     Aave[AaveV3Adapter]
@@ -121,7 +121,7 @@ library rejects noncanonical ABI, native value, self-calls, extra bytes, more th
 four operations, zero adapters/tokens, and any operation without an absolute output
 floor. The executor independently re-derives each token from the adapter.
 
-### `GrowYieldExecutorV3`
+### `GrowYieldExecutor`
 
 Every operation is signed as the following static tuple:
 
@@ -155,7 +155,8 @@ For every operation the executor:
 4. Reads the adapter preview.
 5. Transfers the exact source amount directly from the account to the adapter.
 6. Invokes the adapter, which credits output directly to the account.
-7. Rejects new residual balances or fee-on-transfer source behavior.
+7. Rejects new residual balances or fee-on-transfer source behavior (one wei of
+   rebasing-token rounding, e.g. aTokens, is tolerated).
 8. Measures actual account output.
 9. Requires output to meet both the preview-relative floor and signed absolute floor.
 
@@ -303,13 +304,13 @@ Every adapter also immutably pins `executor`.
 Historical Base deployments (`GrowYieldExecutorV6` at
 `0x4Ac4BE21D3E285DD3A6c6e9B908fc84aC3E72306` and `GrowYieldExecutor1271V2` at
 `0xDD440Cb9530502dAE4e6a5022e5f1dD2718d5dCE`) already have a registry attached, but
-they are **not** `GrowYieldExecutorV3`. No `GrowYieldExecutorV3` production address
-is recorded in this repository.
+they are **not** this repository's `GrowYieldExecutor`. No production address for
+it is recorded in this repository.
 
-Therefore the intended path for the first V3 production stack is the **executor
-stays / registry-once** route:
+Therefore the intended path for the first production stack from this repository is
+the **executor stays / registry-once** route:
 
-1. Deploy `GrowYieldExecutorV3` (and `GrowYieldPolicyModule`).
+1. Deploy `GrowYieldExecutor` (and `GrowYieldPolicyModule`).
 2. Deploy every intended immutable adapter pinned to that executor (Aave, Morpho,
    Euler EVK, Euler Earn, CapyFi, …).
 3. Deploy one complete `GrowYieldAdapterRegistry` listing all of them.

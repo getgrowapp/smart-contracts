@@ -84,13 +84,13 @@ interface IGrowYieldExecutor {
     /// @notice The resolved source-token amount is zero.
     error NoBalance();
 
-    /// @notice The adapter did not receive the exact source amount transferred.
+    /// @notice The adapter's received source amount deviated more than one wei from the transfer.
     error UnsupportedToken();
 
     /// @notice Output is zero or below the loss-capped adapter preview.
     error InsufficientOutput();
 
-    /// @notice The operation increased an adapter's source or output residual balance.
+    /// @notice The operation left more than rounding-level residual balance on the adapter.
     error ResidualBalance();
 
     /// @notice The executor already has its lifetime registry.

@@ -101,11 +101,10 @@ contract AaveV3Adapter is IYieldAdapter {
         uint256 sharesBefore = IERC20(positionToken).balanceOf(address(this));
         uint256 withdrawn = pool.withdraw(asset, shares, receiver);
 
-        // Consume exactly the caller-attributed position amount. Pre-existing donations
-        // are deliberately not swept into an unrelated account's redemption.
-        if (IERC20(positionToken).balanceOf(address(this)) != sharesBefore - shares) {
-            revert ResidualBalance();
-        }
+        // Consume the caller-attributed position amount. aToken burns settle in scaled
+        // units, so allow one wei of rounding; donations are still never swept.
+        uint256 consumed = sharesBefore - IERC20(positionToken).balanceOf(address(this));
+        if (consumed + 1 < shares || consumed > shares + 1) revert ResidualBalance();
 
         return withdrawn;
     }
