@@ -102,6 +102,50 @@ contract GrowYieldForkTest is Test {
         assertEq(aToken.balanceOf(address(adapter)), 0);
     }
 
+    /// @dev Regression: aToken transfers and burns operate in scaled units while the
+    ///      executor (`UnsupportedToken`) and adapter (`ResidualBalance`) enforce exact
+    ///      1-wei deltas. Odd amounts at a live, accruing liquidity index must not
+    ///      spuriously revert.
+    function test_fork_aTokenRounding_oddWeiRedeemExactness() public {
+        deal(USDC, account, 10_000e6);
+        IERC20 aToken = IERC20(adapter.positionToken());
+
+        vm.startPrank(account);
+        IERC20(USDC).approve(address(executor), type(uint256).max);
+
+        Operation[] memory ops = new Operation[](1);
+        ops[0] = Operation({
+            adapter: adapter,
+            kind: OperationKind.DEPOSIT,
+            sourceToken: USDC,
+            amount: 0,
+            amountMode: AmountMode.FULL_BALANCE,
+            minAmountOut: 1
+        });
+        executor.execute(ops);
+
+        aToken.approve(address(executor), type(uint256).max);
+
+        uint256[7] memory redeems = [uint256(1), 3, 7, 101, 999_983, 1_000_003, 123_456_789];
+        for (uint256 i; i < redeems.length; ++i) {
+            // Accrue interest between redeems so the index lands on awkward values.
+            vm.warp(block.timestamp + 13 hours + i * 7 hours);
+
+            ops[0] = Operation({
+                adapter: adapter,
+                kind: OperationKind.REDEEM,
+                sourceToken: address(aToken),
+                amount: redeems[i],
+                amountMode: AmountMode.EXACT,
+                minAmountOut: 1
+            });
+            uint256[] memory out = executor.execute(ops);
+            assertGe(out[0], (redeems[i] * 9950) / 10_000);
+            assertEq(aToken.balanceOf(address(adapter)), 0);
+        }
+        vm.stopPrank();
+    }
+
     function test_fork_registryRemainsFixed() public view {
         assertTrue(registry.canDeposit(address(adapter)));
         assertEq(registry.adapterCodeHash(address(adapter)), address(adapter).codehash);

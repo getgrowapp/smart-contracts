@@ -144,6 +144,13 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         address newOwner = makeAddr("newOwner");
         freshExecutor.transferOwnership(newOwner);
 
+        // Two-step: the current owner keeps control until the pending owner accepts.
+        assertEq(freshExecutor.owner(), address(this));
+        assertEq(freshExecutor.pendingOwner(), newOwner);
+
+        vm.prank(newOwner);
+        freshExecutor.acceptOwnership();
+
         vm.expectRevert(
             abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this))
         );
@@ -153,6 +160,29 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         freshExecutor.initializeRegistry(freshRegistry);
         assertEq(freshExecutor.owner(), newOwner);
         assertEq(address(freshExecutor.registry()), address(freshRegistry));
+    }
+
+    function test_constructor_rejectsZeroMaxLossBps() public {
+        vm.expectRevert(IGrowYieldExecutor.Invalid.selector);
+        new GrowYieldExecutor(0, riskGuardian);
+    }
+
+    function test_setAdapterPolicy_revertsWhenRegistryUninitialized() public {
+        (GrowYieldExecutor freshExecutor,) = _newUninitializedExecutor();
+
+        vm.expectRevert(IGrowYieldExecutor.Uninitialized.selector);
+        freshExecutor.setAdapterPolicy(address(aaveAdapter), 1 ether, 1 ether, 1 days);
+
+        vm.expectRevert(IGrowYieldExecutor.Uninitialized.selector);
+        freshExecutor.resetAdapterPolicy(address(aaveAdapter), 1 ether, 1 ether, 1 days);
+    }
+
+    function test_pauseAdapterDeposits_revertsWhenRegistryUninitialized() public {
+        (GrowYieldExecutor freshExecutor,) = _newUninitializedExecutor();
+
+        vm.prank(riskGuardian);
+        vm.expectRevert(IGrowYieldExecutor.Uninitialized.selector);
+        freshExecutor.pauseAdapterDeposits(address(aaveAdapter));
     }
 
     // --- deposits ---
