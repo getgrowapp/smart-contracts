@@ -11,6 +11,7 @@ import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
 import {AaveV3Adapter} from "../../src/adapters/AaveV3Adapter.sol";
 import {GrowYieldPolicyModule} from "../../src/GrowYieldPolicyModule.sol";
 import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {IYieldAdapter} from "../../src/interfaces/IYieldAdapter.sol";
 
 import {MockUnderlying, MockAavePool} from "../invariant/MockYieldVenues.sol";
 import {MockMutableAaveDataProvider} from "./mocks/MockVaultV2Stack.sol";
@@ -102,6 +103,15 @@ contract DeployTest is Test {
         assertEq(
             GrowYieldExecutor(executor).registryInitializer(), address(deployer), "initializer"
         );
+        assertNotEq(
+            GrowYieldExecutor(executor).registryInitializer(),
+            CREATE2_FACTORY,
+            "CREATE2 factory is initializer"
+        );
+        assertEq(GrowYieldExecutor(executor).riskGuardian(), RISK_GUARDIAN, "risk guardian");
+        assertEq(GrowYieldPolicyModule(policyModule).executor(), executor, "policy executor");
+        assertEq(GrowYieldAdapterRegistry(registry).executor(), executor, "registry executor");
+        assertEq(IYieldAdapter(adapters[0]).executor(), executor, "adapter executor");
         assertTrue(GrowYieldAdapterRegistry(registry).canDeposit(adapterAddr), "adapter enabled");
     }
 

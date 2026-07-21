@@ -5,9 +5,6 @@
   "lib/forge-std": {
     "rev": "bf647bd6046f2f7da30d0c2bf435e5c76a780c1b"
   },
-  "lib/halmos-cheatcodes": {
-    "rev": "6da4e692c357ba6d641a2e677a28298cac9f76ab"
-  },
   "lib/modular-account-v2": {
     "rev": "efab648bd91f79685571af7fa88171e3c142f2f6"
   },

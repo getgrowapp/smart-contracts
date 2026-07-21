@@ -35,11 +35,6 @@
 	path = lib/reference-implementation
 	url = https://github.com/erc6900/reference-implementation
 
-# 6da4e69 — no tagged releases upstream; pinned by commit.
-[submodule "lib/halmos-cheatcodes"]
-	path = lib/halmos-cheatcodes
-	url = https://github.com/a16z/halmos-cheatcodes
-
 # v2.0.1 (efab648) — exact production account implementation used by the
 # compatibility integration test. Do not replace it with the ERC-6900 reference account.
 [submodule "lib/modular-account-v2"]
