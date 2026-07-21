@@ -13,6 +13,7 @@ import {EulerEarnAdapter} from "../src/adapters/EulerEarnAdapter.sol";
 import {EulerEVaultAdapter} from "../src/adapters/EulerEVaultAdapter.sol";
 import {MorphoVaultV2Adapter} from "../src/adapters/MorphoVaultV2Adapter.sol";
 import {IGrowYieldAdapterRegistry} from "../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {IYieldAdapter} from "../src/interfaces/IYieldAdapter.sol";
 
 import {GrowYieldDeployer} from "./GrowYieldDeployer.sol";
 
@@ -88,6 +89,7 @@ contract Deploy is Script {
         // --- Executor init code + predicted address ---
         uint16 maxLossBps = vm.parseJsonUint(config, ".executor.maxLossBps").toUint16();
         address riskGuardian = vm.parseJsonAddress(config, ".executor.riskGuardian");
+        require(riskGuardian != CREATE2_FACTORY, "risk guardian is CREATE2 factory");
         bytes memory executorInit = abi.encodePacked(
             type(GrowYieldExecutor).creationCode, abi.encode(maxLossBps, riskGuardian)
         );
@@ -139,6 +141,10 @@ contract Deploy is Script {
             registryInit
         );
         vm.stopBroadcast();
+
+        _validateAuthorities(
+            config, address(deployer), riskGuardian, executor, policyModule, registry, adapters
+        );
 
         // Deployed addresses must equal the pre-broadcast predictions; otherwise the artifact
         // (and any dependent off-chain config) would record the wrong contracts.
@@ -338,6 +344,39 @@ contract Deploy is Script {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /// @dev Fail the script if constructor authority was captured by the CREATE2 factory or if any
+    ///      component was bound to an address other than the explicitly configured authority.
+    function _validateAuthorities(
+        string memory config,
+        address deployer,
+        address expectedRiskGuardian,
+        address executor,
+        address policyModule,
+        address registry,
+        address[] memory adapters
+    ) internal view {
+        GrowYieldExecutor executorContract = GrowYieldExecutor(executor);
+        require(executorContract.owner() == deployer, "unexpected executor owner");
+        require(executorContract.owner() != CREATE2_FACTORY, "CREATE2 factory owns executor");
+        require(executorContract.riskGuardian() == expectedRiskGuardian, "wrong risk guardian");
+        require(address(executorContract.registry()) == registry, "wrong registry");
+
+        GrowYieldPolicyModule policy = GrowYieldPolicyModule(policyModule);
+        require(policy.executor() == executor, "wrong policy executor");
+        require(
+            policy.requiredPaymaster()
+                == vm.parseJsonAddress(config, ".policyModule.requiredPaymaster"),
+            "wrong required paymaster"
+        );
+
+        require(
+            GrowYieldAdapterRegistry(registry).executor() == executor, "wrong registry executor"
+        );
+        for (uint256 i; i < adapters.length; ++i) {
+            require(IYieldAdapter(adapters[i]).executor() == executor, "wrong adapter executor");
+        }
+    }
 
     function _salt(string memory config, string memory key) internal pure returns (bytes32) {
         return vm.parseJsonBytes32(config, string.concat(".salts.", key));

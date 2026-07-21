@@ -16,23 +16,9 @@ import {MockUnderlying} from "../../invariant/MockYieldVenues.sol";
 /// @dev Settable EVK GenericFactory authenticity oracle.
 contract MockEulerEVaultFactory is IEulerEVaultFactory {
     mapping(address => bool) public isProxy;
-    mapping(address => ProxyConfig) private _configs;
 
     function setProxy(address proxy, bool enabled) external {
         isProxy[proxy] = enabled;
-        if (enabled && _configs[proxy].implementation == address(0)) {
-            _configs[proxy] =
-                ProxyConfig({upgradeable: false, implementation: address(1), trailingData: ""});
-        }
-    }
-
-    function setProxyConfig(address proxy, ProxyConfig calldata config) external {
-        _configs[proxy] = config;
-        isProxy[proxy] = config.implementation != address(0);
-    }
-
-    function getProxyConfig(address proxy) external view returns (ProxyConfig memory) {
-        return _configs[proxy];
     }
 }
 
@@ -60,10 +46,6 @@ contract MockEulerVault is ERC4626 {
         useAssetOverride = true;
     }
 
-    function clearAssetOverride() external {
-        useAssetOverride = false;
-    }
-
     function asset() public view override returns (address) {
         if (useAssetOverride) return assetOverride;
         return super.asset();
@@ -87,7 +69,7 @@ contract MockCapyFiComptroller is ICapyFiComptroller {
     }
 }
 
-/// @dev Compound-v2-style caToken with configurable error codes and exchange rate.
+/// @dev Compound-v2-style caToken with configurable error codes.
 contract MockCapyFiCaToken is ERC20, ICapyFiCaToken {
     using SafeERC20 for IERC20;
 
@@ -106,10 +88,6 @@ contract MockCapyFiCaToken is ERC20, ICapyFiCaToken {
         _underlying = underlying_;
     }
 
-    function setExchangeRate(uint256 rate) external {
-        exchangeRateStored = rate;
-    }
-
     function setMintErrorCode(uint256 code) external {
         mintErrorCode = code;
     }
@@ -126,11 +104,6 @@ contract MockCapyFiCaToken is ERC20, ICapyFiCaToken {
     function setComptrollerOverride(address comptroller_) external {
         comptrollerOverride = comptroller_;
         useComptrollerOverride = true;
-    }
-
-    function clearOverrides() external {
-        useUnderlyingOverride = false;
-        useComptrollerOverride = false;
     }
 
     function comptroller() external view returns (address) {

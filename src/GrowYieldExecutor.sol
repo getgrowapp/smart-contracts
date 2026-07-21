@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 import {IGrowYieldAdapterRegistry} from "./interfaces/IGrowYieldAdapterRegistry.sol";
@@ -21,7 +22,7 @@ import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 /// @notice Routes caller funds through fixed-registry adapters explicitly enabled by that caller.
 /// @dev Operations bind the source token, send output only to the caller, reject transfer-tax
 ///      tokens, enforce a loss-capped preview, and reject adapter code changes and residuals.
-contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
+contract GrowYieldExecutor is Ownable, ReentrancyGuardTransient, IGrowYieldExecutor {
     using SafeERC20 for IERC20;
 
     uint256 private constant BPS = 10_000;
@@ -43,9 +44,6 @@ contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
     IGrowYieldAdapterRegistry public registry;
 
     /// @inheritdoc IGrowYieldExecutor
-    address public immutable registryInitializer;
-
-    /// @inheritdoc IGrowYieldExecutor
     uint16 public immutable maxLossBps;
 
     /// @inheritdoc IGrowYieldExecutor
@@ -56,24 +54,32 @@ contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
 
     mapping(address account => mapping(address adapter => AdapterPolicy)) private _policies;
 
+    /// @dev Requires the one-time registry attachment to have occurred.
+    modifier onlyInitialized() {
+        if (address(registry) == address(0)) {
+            revert Uninitialized();
+        }
+
+        _;
+    }
+
     /// @param maxLossBps_ Maximum shortfall from preview, in basis points.
     /// @param riskGuardian_ Address able to permanently pause adapter deposits.
-    constructor(uint16 maxLossBps_, address riskGuardian_) {
+    constructor(uint16 maxLossBps_, address riskGuardian_) Ownable(msg.sender) {
         if (maxLossBps_ > MAX_LOSS_BPS_CEILING || riskGuardian_ == address(0)) revert Invalid();
-        registryInitializer = msg.sender;
         maxLossBps = maxLossBps_;
         riskGuardian = riskGuardian_;
     }
 
     /// @inheritdoc IGrowYieldExecutor
-    function initializeRegistry(IGrowYieldAdapterRegistry registry_) external {
-        if (msg.sender != registryInitializer) revert OnlyRegistryInitializer();
+    function initializeRegistry(IGrowYieldAdapterRegistry registry_) external onlyOwner {
         if (address(registry) != address(0)) revert RegistryAlreadyInitialized();
         if (address(registry_).code.length == 0 || registry_.executor() != address(this)) {
             revert Invalid();
         }
 
         registry = registry_;
+
         emit RegistryInitialized(address(registry_));
     }
 
@@ -140,6 +146,7 @@ contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
     function execute(Operation[] calldata ops)
         external
         nonReentrant
+        onlyInitialized
         returns (uint256[] memory received)
     {
         uint256 count = ops.length;
@@ -166,7 +173,6 @@ contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
         address adapterAddress = address(adapter);
         bool isDeposit = op.kind == OperationKind.DEPOSIT;
         IGrowYieldAdapterRegistry registry_ = registry;
-        if (address(registry_) == address(0)) revert Invalid();
         AdapterPolicy storage accountPolicy = _policies[msg.sender][adapterAddress];
 
         bool fixedPermission =

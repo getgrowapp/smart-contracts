@@ -63,6 +63,9 @@ interface IGrowYieldExecutor {
     /// @notice Emitted when the immutable risk guardian permanently pauses deposits.
     event AdapterDepositsPaused(address indexed adapter);
 
+    /// @notice Thrown when the GrowYieldAdapterRegistry is uninitialized.
+    error Uninitialized();
+
     /// @notice Constructor, registry, or initialization configuration is invalid.
     error Invalid();
 
@@ -89,9 +92,6 @@ interface IGrowYieldExecutor {
 
     /// @notice The operation increased an adapter's source or output residual balance.
     error ResidualBalance();
-
-    /// @notice A caller other than the executor deployer attempted registry attachment.
-    error OnlyRegistryInitializer();
 
     /// @notice The executor already has its lifetime registry.
     error RegistryAlreadyInitialized();
@@ -154,9 +154,6 @@ interface IGrowYieldExecutor {
 
     /// @notice Adapter registry consulted for every operation.
     function registry() external view returns (IGrowYieldAdapterRegistry);
-
-    /// @notice Address permitted to perform the one-time registry attachment.
-    function registryInitializer() external view returns (address);
 
     /// @notice Maximum accepted shortfall vs. adapter preview, in basis points.
     function maxLossBps() external view returns (uint16);
