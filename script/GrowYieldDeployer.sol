@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.36;
+
+import {IGrowYieldExecutor} from "../src/interfaces/IGrowYieldExecutor.sol";
+import {IGrowYieldAdapterRegistry} from "../src/interfaces/IGrowYieldAdapterRegistry.sol";
+
+/// @title GrowYieldDeployer
+/// @notice Deterministic CREATE2 deployer for the GrowYield stack.
+/// @dev Deployed once at a chain-independent address (salt 0 via the canonical CREATE2
+///      factory), so the same address serves every environment and chain. Because this
+///      contract is the CREATE2 caller for the executor, it becomes the executor's
+///      immutable `registryInitializer`. `deployStack` therefore deploys the executor,
+///      policy module, adapters, and registry AND calls `initializeRegistry` inside a
+///      single transaction, leaving no cross-transaction window in which a foreign
+///      registry could be wired into the executor.
+///
+///      Front-running note: like any shared CREATE2 factory, an observer who copies the
+///      exact salts and init codes from a pending `deployStack` call can occupy the target
+///      addresses first. Run deploys from a controlled/private endpoint; if an address is
+///      already taken the call reverts and a fresh salt yields a clean redeploy.
+contract GrowYieldDeployer {
+    /// @notice A CREATE2 deployment returned the zero address or produced no code.
+    error DeploymentFailed();
+
+    /// @notice Atomically deploys the full stack and wires the registry into the executor.
+    /// @param executorSalt CREATE2 salt for the executor.
+    /// @param executorInit Executor init code (creation code + abi-encoded constructor args).
+    /// @param policySalt   CREATE2 salt for the policy module.
+    /// @param policyInit   Policy module init code.
+    /// @param adapterSalts CREATE2 salts, one per adapter, aligned with `adapterInits`.
+    /// @param adapterInits Adapter init codes.
+    /// @param registrySalt CREATE2 salt for the registry.
+    /// @param registryInit Registry init code (already encodes the executor + adapter set).
+    /// @return executor     Deployed executor address.
+    /// @return policyModule Deployed policy module address.
+    /// @return adapters     Deployed adapter addresses, aligned with `adapterInits`.
+    /// @return registry     Deployed registry address (wired into the executor).
+    function deployStack(
+        bytes32 executorSalt,
+        bytes memory executorInit,
+        bytes32 policySalt,
+        bytes memory policyInit,
+        bytes32[] calldata adapterSalts,
+        bytes[] calldata adapterInits,
+        bytes32 registrySalt,
+        bytes memory registryInit
+    )
+        external
+        returns (
+            address executor,
+            address policyModule,
+            address[] memory adapters,
+            address registry
+        )
+    {
+        // Executor first: this contract is the CREATE2 caller, so it is the executor's
+        // registryInitializer and may perform the one-time registry wiring below.
+        executor = _create2(executorSalt, executorInit);
+        policyModule = _create2(policySalt, policyInit);
+
+        adapters = new address[](adapterInits.length);
+        for (uint256 i; i < adapterInits.length; ++i) {
+            adapters[i] = _create2(adapterSalts[i], adapterInits[i]);
+        }
+
+        registry = _create2(registrySalt, registryInit);
+
+        // Same transaction as the deployments above: no window for a foreign registry.
+        IGrowYieldExecutor(executor).initializeRegistry(IGrowYieldAdapterRegistry(registry));
+    }
+
+    /// @dev Deploys `initCode` with CREATE2 and reverts unless code lands at the address.
+    function _create2(bytes32 salt, bytes memory initCode) internal returns (address addr) {
+        assembly {
+            addr := create2(0, add(initCode, 0x20), mload(initCode), salt)
+        }
+        if (addr == address(0) || addr.code.length == 0) revert DeploymentFailed();
+    }
+}
