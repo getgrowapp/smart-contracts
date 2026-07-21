@@ -44,7 +44,7 @@ import {
     MockVaultV2Factory
 } from "./mocks/MockVaultV2Stack.sol";
 
-abstract contract GrowYield1271TestBase is Test {
+abstract contract GrowYieldTestBase is Test {
     uint16 internal constant MAX_LOSS_BPS = 50;
     uint128 internal constant MAX_VERIFICATION_GAS = 500_000;
     uint128 internal constant MAX_CALL_GAS = 2_000_000;

@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {GrowYield1271TestBase} from "./GrowYield1271TestBase.sol";
+import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
 import {GrowYieldAdapterRegistry} from "../../src/yield-module/GrowYieldAdapterRegistry.sol";
 import {GrowYieldExecutorV3} from "../../src/yield-module/GrowYieldExecutorV3.sol";
 import {AaveV3Adapter} from "../../src/yield-module/adapters/AaveV3Adapter.sol";
@@ -75,7 +75,7 @@ contract MaliciousYieldAdapter is IYieldAdapter {
 }
 
 /// @notice Executor correctness, venue gating, and quantitative invariants.
-contract GrowYieldExecutorV3Test is GrowYield1271TestBase {
+contract GrowYieldExecutorV3Test is GrowYieldTestBase {
     function setUp() public {
         _setUpBase();
     }

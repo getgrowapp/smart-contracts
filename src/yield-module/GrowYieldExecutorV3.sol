@@ -172,7 +172,7 @@ contract GrowYieldExecutorV3 is ReentrancyGuardTransient, IGrowYieldExecutor {
             isDeposit ? accountPolicy.depositLimit != 0 : accountPolicy.redeemLimit != 0;
         if (!fixedPermission || !accountAllowed) revert AdapterNotAllowed();
         if (isDeposit && depositsPaused[adapterAddress]) revert DepositsPaused();
-        
+
         // this prevents ERC-7928 malicious contract upgrades from causing loss of funds.
         if (adapterAddress.codehash != registry_.adapterCodeHash(adapterAddress)) {
             revert AdapterCodeChanged();
