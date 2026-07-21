@@ -21,6 +21,7 @@ import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 ///      matching asset, and an immutable adapter set. Deposits re-check child
 ///      eligibility, liquidity routing, and the caller's current round-trip gates.
 ///      Later gate changes, liquidity, or venue governance can still impair exits.
+/// @custom:security-contact security@getgrowapp.co
 contract MorphoVaultV2Adapter is IYieldAdapter {
     using SafeERC20 for IERC20;
 

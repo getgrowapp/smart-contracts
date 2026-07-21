@@ -21,6 +21,7 @@ import {GrowYieldPolicyLib} from "./GrowYieldPolicyLib.sol";
 /// @notice Validates sponsor-paid yield UserOperations signed by an account's policy owners.
 /// @dev Validation uses only ECDSA recovery, immutable policy limits, and account-associated
 ///      storage.
+/// @custom:security-contact security@getgrowapp.co
 contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
     using UserOperationLib for PackedUserOperation;
 

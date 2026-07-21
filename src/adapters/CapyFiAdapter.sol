@@ -15,6 +15,7 @@ import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 ///      checks prove CapyFi protocol authenticity only; Grow risk approval is registry
 ///      inclusion. Every operation re-checks comptroller binding, listing, and
 ///      underlying; non-zero Compound mint/redeem return codes revert.
+/// @custom:security-contact security@getgrowapp.co
 contract CapyFiAdapter is IYieldAdapter {
     using SafeERC20 for IERC20;
 

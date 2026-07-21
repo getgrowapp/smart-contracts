@@ -12,6 +12,7 @@ import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 /// @dev Subclasses supply only protocol-specific authenticity checks (factory proofs);
 ///      Grow risk approval is registry inclusion. The adapter retains no shares or
 ///      assets — outputs credit `receiver` directly.
+/// @custom:security-contact security@getgrowapp.co
 abstract contract AbstractEulerAdapter is IYieldAdapter {
     using SafeERC20 for IERC20;
 

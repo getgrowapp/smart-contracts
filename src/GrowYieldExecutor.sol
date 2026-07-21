@@ -21,6 +21,7 @@ import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 /// @notice Routes caller funds through fixed-registry adapters explicitly enabled by that caller.
 /// @dev Operations bind the source token, send output only to the caller, reject transfer-tax
 ///      tokens, enforce a loss-capped preview, and reject adapter code changes and residuals.
+/// @custom:security-contact security@getgrowapp.co
 contract GrowYieldExecutor is Ownable, ReentrancyGuardTransient, IGrowYieldExecutor {
     using SafeERC20 for IERC20;
 

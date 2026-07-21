@@ -15,6 +15,7 @@ import {IYieldAdapter} from "../src/interfaces/IYieldAdapter.sol";
 ///      the registry in one transaction — no window for a foreign registry.
 ///      Pending `deployStack` calldata can be front-run to occupy the target addresses;
 ///      deploy from a private endpoint, or redeploy with fresh salts if taken.
+/// @custom:security-contact security@getgrowapp.co
 contract GrowYieldDeployer {
     /// @notice A CREATE2 deployment returned the zero address or produced no code.
     error DeploymentFailed();

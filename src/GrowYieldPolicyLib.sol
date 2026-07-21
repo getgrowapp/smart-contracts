@@ -19,6 +19,7 @@ import {IGrowYieldExecutor, Operation} from "./interfaces/IGrowYieldExecutor.sol
 ///      Tokens are the unique declared operation source tokens in first-appearance
 ///      order. The executor verifies each declaration before transferring funds.
 ///      Malformed ABI reverts; the validation module contains it with a self-call.
+/// @custom:security-contact security@getgrowapp.co
 library GrowYieldPolicyLib {
     /// @dev Validation-phase gas bound; covers deposit, withdraw, reallocate, and
     ///      small multi-venue rebalances.

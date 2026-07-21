@@ -14,6 +14,7 @@ import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 ///      aToken; redemptions use the pinned pool and token without that drift check.
 ///      Previews are identity because Aave mints and burns aTokens at par. Withdrawals
 ///      remain subject to Aave liquidity and governance controls.
+/// @custom:security-contact security@getgrowapp.co
 contract AaveV3Adapter is IYieldAdapter {
     using SafeERC20 for IERC20;
 

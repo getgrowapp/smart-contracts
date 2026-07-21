@@ -11,6 +11,7 @@ import {AbstractEulerAdapter} from "./AbstractEulerAdapter.sol";
 /// @dev Authenticity is proven by the pinned EulerEarnFactory's `isVault` registry.
 ///      The vault's `asset()` is re-checked on every operation against the pinned
 ///      underlying so a miswired or drifted vault cannot be used silently.
+/// @custom:security-contact security@getgrowapp.co
 contract EulerEarnAdapter is AbstractEulerAdapter {
     /// @notice Canonical EulerEarnFactory used to authenticate the vault.
     IEulerEarnFactory public immutable factory;
