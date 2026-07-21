@@ -9,7 +9,6 @@ import {IGrowYieldPolicyModule} from "../src/interfaces/IGrowYieldPolicyModule.s
 import {IYieldAdapter} from "../src/interfaces/IYieldAdapter.sol";
 
 /// @title GrowYieldDeployer
-/// @author 0xOsiris, Grow
 /// @notice Deterministic CREATE2 deployer for the GrowYield stack.
 /// @dev Deployed once at a chain-independent address. As the executor's CREATE2 caller it
 ///      becomes the executor's owner, so `deployStack` deploys the full stack and wires

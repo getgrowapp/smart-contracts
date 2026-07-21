@@ -9,7 +9,6 @@ import {
 import {IGrowYieldExecutor, Operation} from "./interfaces/IGrowYieldExecutor.sol";
 
 /// @title GrowYieldPolicyLib
-/// @author 0xOsiris, Grow
 /// @notice Static calldata policy for Grow yield automation batches.
 /// @dev Accepts only the canonical form:
 ///

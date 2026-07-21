@@ -7,7 +7,6 @@ import {IEulerEVaultFactory} from "../interfaces/IEulerEVaultFactory.sol";
 import {AbstractEulerAdapter} from "./AbstractEulerAdapter.sol";
 
 /// @title EulerEVaultAdapter
-/// @author 0xOsiris, Grow
 /// @notice Immutable GrowYield adapter for one Euler EVK (EVault) market.
 /// @dev Authenticity is proven by the pinned EVK GenericFactory's `isProxy` registry.
 ///      The vault's `asset()` is re-checked on every operation against the pinned

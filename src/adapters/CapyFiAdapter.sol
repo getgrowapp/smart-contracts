@@ -10,7 +10,6 @@ import {ICapyFiComptroller} from "../interfaces/ICapyFiComptroller.sol";
 import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
 /// @title CapyFiAdapter
-/// @author 0xOsiris, Grow
 /// @notice Immutable GrowYield adapter for one Compound-v2-style CapyFi caToken market.
 /// @dev Pins the executor, Comptroller, caToken, and underlying. Comptroller/listing
 ///      checks prove CapyFi protocol authenticity only; Grow risk approval is registry

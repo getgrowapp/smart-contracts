@@ -16,7 +16,6 @@ import {IMorphoVaultEligibility} from "../interfaces/IMorphoVaultEligibility.sol
 import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
 /// @title MorphoVaultV2Adapter
-/// @author 0xOsiris, Grow
 /// @notice Morpho VaultV2 venue adapter for one wrapper vault.
 /// @dev The wrapper must have one factory-authenticated Morpho VaultV1 adapter, a
 ///      matching asset, and an immutable adapter set. Deposits re-check child

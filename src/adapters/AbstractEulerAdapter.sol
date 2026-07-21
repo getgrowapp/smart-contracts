@@ -8,7 +8,6 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
 /// @title AbstractEulerAdapter
-/// @author 0xOsiris, Grow
 /// @notice Shared ERC-4626 deposit/redeem path for Euler EVK and Euler Earn vaults.
 /// @dev Subclasses supply only protocol-specific authenticity checks (factory proofs);
 ///      Grow risk approval is registry inclusion. The adapter retains no shares or

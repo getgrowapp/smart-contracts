@@ -18,7 +18,6 @@ import {IGrowYieldPolicyModule} from "./interfaces/IGrowYieldPolicyModule.sol";
 import {GrowYieldPolicyLib} from "./GrowYieldPolicyLib.sol";
 
 /// @title GrowYieldPolicyModule
-/// @author 0xOsiris, Grow
 /// @notice Validates sponsor-paid yield UserOperations signed by an account's policy owners.
 /// @dev Validation uses only ECDSA recovery, immutable policy limits, and account-associated
 ///      storage.

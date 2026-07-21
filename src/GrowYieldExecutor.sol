@@ -18,7 +18,6 @@ import {
 import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 
 /// @title GrowYieldExecutor
-/// @author 0xOsiris, Grow
 /// @notice Routes caller funds through fixed-registry adapters explicitly enabled by that caller.
 /// @dev Operations bind the source token, send output only to the caller, reject transfer-tax
 ///      tokens, enforce a loss-capped preview, and reject adapter code changes and residuals.

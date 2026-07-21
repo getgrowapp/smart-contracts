@@ -5,7 +5,6 @@ import {IGrowYieldAdapterRegistry} from "./interfaces/IGrowYieldAdapterRegistry.
 import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 
 /// @title GrowYieldAdapterRegistry
-/// @author 0xOsiris, Grow
 /// @notice Immutable-by-design adapter set extended only by deploying a new registry.
 /// @dev Configuration is written only in the constructor. Adapters must be direct,
 ///      non-upgradeable deployments because the executor pins their code hashes.
