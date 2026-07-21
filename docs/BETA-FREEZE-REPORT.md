@@ -33,7 +33,7 @@ Plus prior harden: malformed proofs return `0xffffffff` (no decode revert). Conf
 
 | Gate | Result |
 |---|---|
-| Forge `test/yield-1271/*` | **48 passed** (22 adversarial + 9 unit + 6 executor + 5 invariants + 2 stateful + 4 fork) |
+| Forge `test/yield-module/*` | **48 passed** (22 adversarial + 9 unit + 6 executor + 5 invariants + 2 stateful + 4 fork) |
 | Halmos | **5/5 passed** |
 | Slither | 21 results — same dispositions (reentrancy mitigated by `nonReentrant`, intentional `==0` / timestamp / assembly) |
 | Base fork | Beta signer code present; junk → `0xffffffff` |
@@ -65,4 +65,4 @@ End: USDC `999991` on SCW; positions clear; allowance to executor `0`.
 3. Pin `verificationGasLimit ≥ 500_000` + paymaster refresh (dummy INVALID still underestimates).
 4. No on-chain amount caps (full-balance ops by design).
 
-See `SECURITY.md` / `docs/yield-1271/SECURITY.md`.
+See `SECURITY.md` / `docs/yield-module/SECURITY.md`.

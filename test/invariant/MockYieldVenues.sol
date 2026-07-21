@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
 
@@ -47,6 +48,8 @@ contract MockAToken is ERC20 {
 
 /// @dev Aave-like pool for invariant testing. aTokens mint 1:1 with underlying.
 contract MockAavePool is IAaveV3Pool {
+    using SafeERC20 for IERC20;
+
     MockUnderlying public immutable underlying;
     MockAToken public immutable aToken;
 
@@ -55,25 +58,22 @@ contract MockAavePool is IAaveV3Pool {
         aToken = new MockAToken(address(this), address(underlying_));
     }
 
-    function supply(
-        address asset,
-        uint256 amount,
-        address onBehalfOf,
-        uint16
-    ) external override {
+    function supply(address asset, uint256 amount, address onBehalfOf, uint16) external override {
         require(asset == address(underlying), "asset");
-        IERC20(asset).transferFrom(msg.sender, address(this), amount);
+        IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
         aToken.mint(onBehalfOf, amount);
     }
 
-    function withdraw(
-        address asset,
-        uint256 amount,
-        address to
-    ) external override returns (uint256) {
+    function withdraw(address asset, uint256 amount, address to)
+        external
+        override
+        returns (uint256)
+    {
         require(asset == address(underlying), "asset");
+        // Real Aave V3 treats uint256.max as "full balance of msg.sender".
+        if (amount == type(uint256).max) amount = aToken.balanceOf(msg.sender);
         aToken.burn(msg.sender, amount);
-        IERC20(asset).transfer(to, amount);
+        IERC20(asset).safeTransfer(to, amount);
         return amount;
     }
 }

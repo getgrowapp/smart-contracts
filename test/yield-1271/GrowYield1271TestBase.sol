@@ -2,47 +2,82 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {Call, IModularAccount} from
-    "@erc6900/reference-implementation/interfaces/IModularAccount.sol";
-import {MessageHashUtils} from
-    "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
-import {PackedUserOperation} from
-    "@eth-infinitism/account-abstraction/interfaces/PackedUserOperation.sol";
+import {
+    Call,
+    IModularAccount
+} from "@erc6900/reference-implementation/interfaces/IModularAccount.sol";
+import {
+    PackedUserOperation
+} from "@eth-infinitism/account-abstraction/interfaces/PackedUserOperation.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-import {GrowYield1271PolicySignerV3} from
-    "../../src/yield-1271/GrowYield1271PolicySignerV3.sol";
-import {GrowUserOpHashLib} from "../../src/yield-1271/GrowUserOpHashLib.sol";
-import {GrowYieldExecutor1271V2} from
-    "../../src/yield-1271/GrowYieldExecutor1271V2.sol";
+import {IVaultV2} from "vault-v2/interfaces/IVaultV2.sol";
+import {IVaultV2Factory} from "vault-v2/interfaces/IVaultV2Factory.sol";
 import {
+    IMorphoVaultV1AdapterFactory
+} from "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
+
+import {GrowYieldPolicyModule} from "../../src/yield-module/GrowYieldPolicyModule.sol";
+import {GrowYieldExecutorV3} from "../../src/yield-module/GrowYieldExecutorV3.sol";
+import {GrowYieldAdapterRegistry} from "../../src/yield-module/GrowYieldAdapterRegistry.sol";
+import {AaveV3Adapter} from "../../src/yield-module/adapters/AaveV3Adapter.sol";
+import {MorphoVaultV2Adapter} from "../../src/yield-module/adapters/MorphoVaultV2Adapter.sol";
+import {
+    IGrowYieldAdapterRegistry
+} from "../../src/yield-module/interfaces/IGrowYieldAdapterRegistry.sol";
+import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
+import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
+import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
+import {
+    AmountMode,
     IGrowYieldExecutor,
-    IGrowYieldTypes
-} from "../../src/yield-v6/IGrowYieldSystem.sol";
-import {MockGrowYieldRegistry1271} from "./MockGrowYieldRegistry1271.sol";
+    IYieldAdapter,
+    Operation,
+    OperationKind
+} from "../../src/yield-module/interfaces/IGrowYieldExecutor.sol";
+import {MockUnderlying, MockVault, MockAavePool} from "../invariant/MockYieldVenues.sol";
 import {
-    MockUnderlying,
-    MockVault,
-    MockAavePool
-} from "../invariant/MockYieldVenues.sol";
+    MockEligibility,
+    MockMorphoV1AdapterFactory,
+    MockMutableAaveDataProvider,
+    MockValidationModule,
+    MockVaultV2,
+    MockVaultV2Factory
+} from "./mocks/MockVaultV2Stack.sol";
 
-abstract contract GrowYield1271TestBase is Test, IGrowYieldTypes {
-    using MessageHashUtils for bytes32;
+abstract contract GrowYield1271TestBase is Test {
+    uint16 internal constant MAX_LOSS_BPS = 50;
+    uint128 internal constant MAX_VERIFICATION_GAS = 500_000;
+    uint128 internal constant MAX_CALL_GAS = 2_000_000;
+    uint256 internal constant MAX_PRE_VERIFICATION_GAS = 150_000;
+    uint128 internal constant MAX_PAYMASTER_VERIFICATION_GAS = 200_000;
+    uint128 internal constant MAX_PAYMASTER_POST_OP_GAS = 200_000;
+    uint128 internal constant MAX_PRIORITY_FEE = 2 gwei;
+    uint128 internal constant MAX_FEE = 2 gwei;
+    uint32 internal constant POLICY_ENTITY_ID = 1;
+    uint256 internal constant DEFAULT_VOLUME_LIMIT = 1e36;
 
-    bytes4 internal constant INVALID = 0xffffffff;
-    address internal constant ENTRY_POINT =
-        0x0000000071727De22E5E9d8BAf0edAc6f37da032;
-
-    GrowYield1271PolicySignerV3 internal signer;
-    GrowYieldExecutor1271V2 internal executor;
-    MockGrowYieldRegistry1271 internal registry;
+    GrowYieldAdapterRegistry internal registry;
+    GrowYieldExecutorV3 internal executor;
+    GrowYieldPolicyModule internal policyModule;
+    address internal sponsorPaymaster;
+    address internal riskGuardian;
 
     MockUnderlying internal underlying;
     MockUnderlying internal otherUnderlying;
+
     MockAavePool internal aavePool;
     MockAavePool internal aavePoolOther;
-    MockVault internal morphoVault;
-    MockVault internal morphoVaultOther;
+    MockMutableAaveDataProvider internal aaveDataProvider;
+    MockMutableAaveDataProvider internal aaveDataProviderOther;
+    AaveV3Adapter internal aaveAdapter;
+    AaveV3Adapter internal aaveAdapterOther;
+
+    MockVaultV2Factory internal morphoFactory;
+    MockEligibility internal morphoEligibility;
+    MockMorphoV1AdapterFactory internal morphoAdapterFactory;
+    MockVault internal morphoChild;
+    MockVaultV2 internal morphoWrapper;
+    MorphoVaultV2Adapter internal morphoAdapter;
 
     address internal account;
     uint256 internal automationPk;
@@ -50,138 +85,194 @@ abstract contract GrowYield1271TestBase is Test, IGrowYieldTypes {
 
     function _setUpBase() internal {
         account = makeAddr("smartAccount");
+        sponsorPaymaster = address(new MockValidationModule());
+        _deployStack();
+
+        address[] memory initialOwners = new address[](1);
+        initialOwners[0] = automation;
+        vm.prank(account);
+        policyModule.onInstall(abi.encode(POLICY_ENTITY_ID, initialOwners));
+        _enableAllAdapters(account);
+    }
+
+    /// @dev Deploys executor, adapters, fixed registry, then the policy module.
+    function _deployStack() internal {
         automationPk = uint256(keccak256("automation"));
         automation = vm.addr(automationPk);
+        riskGuardian = makeAddr("riskGuardian");
 
-        registry = new MockGrowYieldRegistry1271();
-        executor = new GrowYieldExecutor1271V2(registry, 50);
-        signer = new GrowYield1271PolicySignerV3(address(executor));
-
+        executor = new GrowYieldExecutorV3(MAX_LOSS_BPS, riskGuardian);
         underlying = new MockUnderlying();
         otherUnderlying = new MockUnderlying();
-        aavePool = new MockAavePool(underlying);
-        aavePoolOther = new MockAavePool(otherUnderlying);
-        morphoVault = new MockVault(underlying, "Morpho A", "mA");
-        morphoVaultOther = new MockVault(otherUnderlying, "Morpho B", "mB");
 
-        _setAave(Protocol.AAVE, address(aavePool), address(underlying), true, true);
-        _setAave(
-            Protocol.AAVE,
-            address(aavePoolOther),
-            address(otherUnderlying),
-            true,
-            true
-        );
-        _setMorpho(address(morphoVault), address(underlying), true, true);
-        _setMorpho(
-            address(morphoVaultOther), address(otherUnderlying), true, true
-        );
+        (aavePool, aaveDataProvider, aaveAdapter) = _deployAaveStack(underlying);
+        (aavePoolOther, aaveDataProviderOther, aaveAdapterOther) = _deployAaveStack(otherUnderlying);
+        _deployMorphoStack();
 
-        vm.prank(account);
-        signer.configure(automation, 0);
+        IGrowYieldAdapterRegistry.AdapterConfig[] memory adapters =
+            new IGrowYieldAdapterRegistry.AdapterConfig[](3);
+        adapters[0] = IGrowYieldAdapterRegistry.AdapterConfig(address(aaveAdapter), true, true);
+        adapters[1] = IGrowYieldAdapterRegistry.AdapterConfig(address(aaveAdapterOther), true, true);
+        adapters[2] = IGrowYieldAdapterRegistry.AdapterConfig(address(morphoAdapter), true, true);
+        registry = new GrowYieldAdapterRegistry(address(executor), adapters);
+        executor.initializeRegistry(registry);
+
+        policyModule = new GrowYieldPolicyModule(
+            address(executor),
+            sponsorPaymaster,
+            MAX_VERIFICATION_GAS,
+            MAX_CALL_GAS,
+            MAX_PRE_VERIFICATION_GAS,
+            MAX_PAYMASTER_VERIFICATION_GAS,
+            MAX_PAYMASTER_POST_OP_GAS,
+            MAX_PRIORITY_FEE,
+            MAX_FEE
+        );
     }
 
-    function _setAave(
-        Protocol,
-        address pool,
-        address asset,
-        bool canEnter,
-        bool canExit
-    ) internal {
-        address aToken = address(MockAavePool(pool).aToken());
-        Venue memory v = Venue({
-            asset: asset,
-            positionToken: aToken,
-            canEnter: canEnter,
-            canExit: canExit
+    function _enableAllAdapters(address account_) internal {
+        vm.startPrank(account_);
+        executor.setAdapterPolicy(
+            address(aaveAdapter), DEFAULT_VOLUME_LIMIT, DEFAULT_VOLUME_LIMIT, 1 days
+        );
+        executor.setAdapterPolicy(
+            address(aaveAdapterOther), DEFAULT_VOLUME_LIMIT, DEFAULT_VOLUME_LIMIT, 1 days
+        );
+        executor.setAdapterPolicy(
+            address(morphoAdapter), DEFAULT_VOLUME_LIMIT, DEFAULT_VOLUME_LIMIT, 1 days
+        );
+        vm.stopPrank();
+    }
+
+    function _deployAaveStack(MockUnderlying asset_)
+        internal
+        returns (MockAavePool pool, MockMutableAaveDataProvider provider, AaveV3Adapter adapter)
+    {
+        pool = new MockAavePool(asset_);
+        provider = new MockMutableAaveDataProvider(address(asset_), address(pool.aToken()));
+        adapter = new AaveV3Adapter(
+            IAaveV3Pool(address(pool)),
+            IAaveProtocolDataProvider(address(provider)),
+            address(asset_),
+            address(executor)
+        );
+    }
+
+    function _deployMorphoStack() internal {
+        morphoFactory = new MockVaultV2Factory();
+        morphoEligibility = new MockEligibility();
+        morphoAdapterFactory = new MockMorphoV1AdapterFactory();
+
+        morphoChild = new MockVault(IERC20(address(underlying)), "Child", "cV");
+        morphoEligibility.set(address(morphoChild), true);
+
+        morphoWrapper = new MockVaultV2(IERC20(address(underlying)), "Wrapper", "wV");
+        morphoFactory.set(address(morphoWrapper), true);
+        morphoWrapper.addMockAdapter(
+            morphoAdapterFactory.create(address(morphoWrapper), address(morphoChild))
+        );
+        morphoWrapper.setAbdicated(IVaultV2.addAdapter.selector, true);
+        morphoWrapper.setAbdicated(IVaultV2.removeAdapter.selector, true);
+
+        morphoAdapter = new MorphoVaultV2Adapter(
+            IVaultV2(address(morphoWrapper)),
+            IVaultV2Factory(address(morphoFactory)),
+            IMorphoVaultV1AdapterFactory(address(morphoAdapterFactory)),
+            IMorphoVaultEligibility(address(morphoEligibility)),
+            address(executor)
+        );
+    }
+
+    function _op(IYieldAdapter adapter, OperationKind kind, uint256 amount)
+        internal
+        view
+        returns (Operation memory)
+    {
+        address sourceToken =
+            kind == OperationKind.DEPOSIT ? adapter.asset() : adapter.positionToken();
+        AmountMode amountMode =
+            amount == type(uint256).max ? AmountMode.FULL_BALANCE : AmountMode.EXACT;
+        return Operation({
+            adapter: adapter,
+            kind: kind,
+            sourceToken: sourceToken,
+            amount: amountMode == AmountMode.EXACT ? amount : 0,
+            amountMode: amountMode,
+            minAmountOut: 1
         });
-        registry.setEntry(Protocol.AAVE, pool, asset, v);
-        registry.setExit(Protocol.AAVE, pool, asset, v);
-        // Also index by zero asset hint for exit lookups using position-only flows.
-        registry.setExit(Protocol.AAVE, pool, address(0), v);
     }
 
-    function _setMorpho(
-        address vault,
-        address asset,
-        bool canEnter,
-        bool canExit
-    ) internal {
-        Venue memory v = Venue({
-            asset: asset,
-            positionToken: vault,
-            canEnter: canEnter,
-            canExit: canExit
+    function _opWithMode(
+        IYieldAdapter adapter,
+        OperationKind kind,
+        AmountMode amountMode,
+        uint256 amount,
+        uint256 minAmountOut
+    ) internal view returns (Operation memory) {
+        address sourceToken = kind == OperationKind.DEPOSIT
+            ? adapter.asset()
+            : adapter.positionToken();
+        return Operation({
+            adapter: adapter,
+            kind: kind,
+            sourceToken: sourceToken,
+            amount: amount,
+            amountMode: amountMode,
+            minAmountOut: minAmountOut
         });
-        registry.setEntry(Protocol.MORPHO, vault, asset, v);
-        registry.setExit(Protocol.MORPHO, vault, asset, v);
-        registry.setExit(Protocol.MORPHO, vault, address(0), v);
     }
 
-    function _approve(address spender, uint256 amount)
+    function _ops1(Operation memory op) internal pure returns (Operation[] memory ops) {
+        ops = new Operation[](1);
+        ops[0] = op;
+    }
+
+    function _ops2(Operation memory a, Operation memory b)
         internal
-        pure
-        returns (bytes memory)
+        view
+        returns (Operation[] memory ops)
     {
-        return abi.encodeWithSelector(
-            bytes4(keccak256("approve(address,uint256)")), spender, amount
-        );
+        address firstOutputToken =
+            a.kind == OperationKind.DEPOSIT ? a.adapter.positionToken() : a.adapter.asset();
+        if (b.amountMode == AmountMode.FULL_BALANCE && b.sourceToken == firstOutputToken) {
+            b.amountMode = AmountMode.PREVIOUS_OUTPUT;
+        }
+        ops = new Operation[](2);
+        ops[0] = a;
+        ops[1] = b;
     }
 
-    function _depositOp(Protocol protocol, address target, address asset)
-        internal
-        pure
-        returns (bytes memory)
-    {
-        return abi.encodeCall(
-            IGrowYieldExecutor.depositAll, (protocol, target, asset)
-        );
+    function _executeData(Operation[] memory ops) internal pure returns (bytes memory) {
+        return abi.encodeCall(IGrowYieldExecutor.execute, (ops));
     }
 
-    function _withdrawOp(Protocol protocol, address target, address assetHint)
-        internal
-        pure
-        returns (bytes memory)
-    {
-        return abi.encodeCall(
-            IGrowYieldExecutor.withdrawAll, (protocol, target, assetHint)
-        );
+    function _approve(address spender, uint256 amount) internal pure returns (bytes memory) {
+        return
+            abi.encodeWithSelector(bytes4(keccak256("approve(address,uint256)")), spender, amount);
     }
 
-    function _reallocOp(
-        Protocol srcP,
-        address srcT,
-        address srcHint,
-        Protocol dstP,
-        address dstT,
-        address dstAsset
-    ) internal pure returns (bytes memory) {
-        return abi.encodeWithSelector(
-            bytes4(
-                keccak256(
-                    "reallocateAll(uint8,address,address,uint8,address,address)"
-                )
-            ),
-            srcP,
-            srcT,
-            srcHint,
-            dstP,
-            dstT,
-            dstAsset
-        );
-    }
-
-    function _batch(address token, bytes memory opData)
+    /// @dev Canonical policy batch: approve-max, execute, then approve-zero per source token.
+    function _batch(address[] memory tokens, Operation[] memory ops)
         internal
         view
         returns (bytes memory)
     {
-        Call[] memory calls = new Call[](3);
-        calls[0] =
-            Call(token, 0, _approve(address(executor), type(uint256).max));
-        calls[1] = Call(address(executor), 0, opData);
-        calls[2] = Call(token, 0, _approve(address(executor), 0));
+        uint256 count = tokens.length;
+        Call[] memory calls = new Call[](2 * count + 1);
+
+        for (uint256 i; i < count; ++i) {
+            calls[i] = Call(tokens[i], 0, _approve(address(executor), type(uint256).max));
+            calls[count + 1 + i] = Call(tokens[i], 0, _approve(address(executor), 0));
+        }
+        calls[count] = Call(address(executor), 0, _executeData(ops));
+
         return abi.encodeCall(IModularAccount.executeBatch, (calls));
+    }
+
+    function _batch1(address token, Operation[] memory ops) internal view returns (bytes memory) {
+        address[] memory tokens = new address[](1);
+        tokens[0] = token;
+        return _batch(tokens, ops);
     }
 
     function _baseUserOp(bytes memory callData)
@@ -191,87 +282,69 @@ abstract contract GrowYield1271TestBase is Test, IGrowYieldTypes {
     {
         userOp.sender = account;
         userOp.nonce = 1;
-        userOp.initCode = "";
         userOp.callData = callData;
         userOp.accountGasLimits =
-            bytes32((uint256(500_000) << 128) | uint256(500_000));
-        userOp.preVerificationGas = 50_000;
+            bytes32((uint256(MAX_VERIFICATION_GAS) << 128) | uint256(MAX_CALL_GAS));
+        userOp.preVerificationGas = 100_000;
         userOp.gasFees = bytes32((uint256(1 gwei) << 128) | uint256(1 gwei));
-        userOp.paymasterAndData = "";
-        userOp.signature = "";
+        userOp.paymasterAndData =
+            abi.encodePacked(sponsorPaymaster, uint128(100_000), uint128(100_000));
     }
 
-    function _signAuth(bytes32 userOpHash, uint48 validUntil)
+    function _signAuthorization(uint256 key, bytes32 userOpHash)
         internal
         view
         returns (bytes memory)
     {
-        return _signAuthWithKey(automationPk, userOpHash, validUntil);
-    }
-
-    function _signAuthWithKey(
-        uint256 pk,
-        bytes32 userOpHash,
-        uint48 validUntil
-    ) internal view returns (bytes memory) {
         bytes32 structHash = keccak256(
-            abi.encode(
-                keccak256(
-                    "GrowYieldAuthorization(bytes32 userOpHash,uint48 validUntil)"
-                ),
-                userOpHash,
-                validUntil
-            )
+            abi.encode(keccak256("GrowYieldAuthorization(bytes32 userOpHash)"), userOpHash)
         );
         bytes32 domainSeparator = keccak256(
             abi.encode(
                 keccak256(
                     "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
                 ),
-                keccak256(bytes("GrowYieldPolicySigner")),
+                keccak256(bytes("GrowYieldPolicy")),
                 keccak256(bytes("1")),
                 block.chainid,
-                address(signer)
+                address(policyModule)
             )
         );
-        bytes32 digest =
-            keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, digest);
         return abi.encodePacked(r, s, v);
     }
 
-    function _encodeProof(
-        PackedUserOperation memory userOp,
-        address entryPoint,
-        uint48 validUntil,
-        bytes memory authSig
-    ) internal pure returns (bytes memory) {
-        return abi.encode(
-            GrowYield1271PolicySignerV3.Proof({
-                version: 1,
-                entryPoint: entryPoint,
-                validUntil: validUntil,
-                userOp: userOp,
-                signature: authSig
-            })
-        );
-    }
-
-    function _validProof(PackedUserOperation memory userOp)
+    function _authorize(PackedUserOperation memory userOp, bytes32 userOpHash, uint256 key)
         internal
         view
-        returns (bytes memory proof, bytes32 ethHash)
+        returns (PackedUserOperation memory)
     {
-        bytes32 userOpHash =
-            GrowUserOpHashLib.hash(userOp, ENTRY_POINT, block.chainid);
-        uint48 validUntil = uint48(block.timestamp + 1 hours);
-        proof = _encodeProof(
-            userOp, ENTRY_POINT, validUntil, _signAuth(userOpHash, validUntil)
-        );
-        ethHash = userOpHash.toEthSignedMessageHash();
+        userOp.signature = _signAuthorization(key, userOpHash);
+        return userOp;
     }
 
-    function _assertInvalid(bytes32 hash, bytes memory proof) internal view {
-        assertEq(signer.isValidSignature(hash, proof), INVALID);
+    function _authorize(PackedUserOperation memory userOp, bytes32 userOpHash)
+        internal
+        view
+        returns (PackedUserOperation memory)
+    {
+        return _authorize(userOp, userOpHash, automationPk);
+    }
+
+    function _validationResult(PackedUserOperation memory userOp, bytes32 userOpHash)
+        internal
+        returns (uint256 result)
+    {
+        vm.prank(account);
+        result = policyModule.validateUserOp(POLICY_ENTITY_ID, userOp, userOpHash);
+    }
+
+    function _assertValid(PackedUserOperation memory userOp, bytes32 userOpHash) internal {
+        assertEq(uint160(_validationResult(userOp, userOpHash)), 0);
+    }
+
+    function _assertInvalid(PackedUserOperation memory userOp, bytes32 userOpHash) internal {
+        assertEq(uint160(_validationResult(userOp, userOpHash)), 1);
     }
 }

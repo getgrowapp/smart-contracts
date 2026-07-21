@@ -10,3 +10,4 @@ lcov.info
 coverage/
 .bin/
 node_modules/
+.venv-slither/

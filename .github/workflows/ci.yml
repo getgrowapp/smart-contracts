@@ -1,0 +1,35 @@
+name: Solidity CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out pinned dependencies
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.7.1
+
+      - name: Check formatting
+        run: forge fmt --check
+
+      - name: Build and check contract sizes
+        run: forge build --sizes
+
+      - name: Run tests
+        run: forge test
+
+      - name: Run lints
+        run: forge lint
