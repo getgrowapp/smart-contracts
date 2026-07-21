@@ -10,10 +10,12 @@ import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 ///      non-upgradeable deployments because the executor pins their code hashes.
 ///      Factory/Comptroller checks inside adapters prove protocol authenticity only;
 ///      inclusion in this registry is the Grow approval and risk-admission boundary.
+/// @custom:security-contact security@getgrowapp.co
 contract GrowYieldAdapterRegistry is IGrowYieldAdapterRegistry {
     /// @notice Maximum adapters in one fixed registry.
     uint256 public constant MAX_ADAPTERS = 16;
 
+    /// @dev Directional permissions fixed at deployment.
     struct AdapterPermissions {
         bool canDeposit;
         bool canRedeem;
@@ -32,6 +34,8 @@ contract GrowYieldAdapterRegistry is IGrowYieldAdapterRegistry {
     /// @inheritdoc IGrowYieldAdapterRegistry
     mapping(address adapter => bytes32) public adapterCodeHash;
 
+    /// @param executor_ Executor every registered adapter must authorize.
+    /// @param adapters Adapter set fixed for this registry's lifetime.
     constructor(address executor_, AdapterConfig[] memory adapters) {
         if (executor_.code.length == 0 || adapters.length == 0 || adapters.length > MAX_ADAPTERS) {
             revert Invalid();

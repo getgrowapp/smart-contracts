@@ -30,6 +30,7 @@ contract GrowYieldExecutor is Ownable2Step, ReentrancyGuardTransient, IGrowYield
     /// @notice Hard ceiling on the constructor-set loss cap (1%).
     uint16 public constant MAX_LOSS_BPS_CEILING = 100;
 
+    /// @dev Per-account directional volume limits and usage for one adapter epoch.
     struct AdapterPolicy {
         uint256 depositLimit;
         uint256 redeemLimit;
@@ -53,6 +54,7 @@ contract GrowYieldExecutor is Ownable2Step, ReentrancyGuardTransient, IGrowYield
 
     mapping(address account => mapping(address adapter => AdapterPolicy)) private _policies;
 
+    /// @dev Requires the one-time registry attachment to have occurred.
     modifier onlyInitialized() {
         if (address(registry) == address(0)) {
             revert Uninitialized();
@@ -162,6 +164,7 @@ contract GrowYieldExecutor is Ownable2Step, ReentrancyGuardTransient, IGrowYield
         }
     }
 
+    /// @dev Validates, funds, and executes one operation; enforces budget and output floors.
     function _run(
         Operation calldata op,
         address previousOutputToken,
@@ -236,6 +239,7 @@ contract GrowYieldExecutor is Ownable2Step, ReentrancyGuardTransient, IGrowYield
         emit Executed(msg.sender, adapterAddress, op.kind, amount, receivedOut);
     }
 
+    /// @dev Shared policy-write path; `resetUsage` starts a fresh epoch.
     function _setAdapterPolicy(
         address adapter,
         uint256 depositLimit_,
@@ -289,6 +293,7 @@ contract GrowYieldExecutor is Ownable2Step, ReentrancyGuardTransient, IGrowYield
         );
     }
 
+    /// @dev Resolves the source amount for the operation's declared amount mode.
     function _resolveAmount(
         Operation calldata op,
         IERC20 sourceToken,

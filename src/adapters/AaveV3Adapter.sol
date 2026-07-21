@@ -14,6 +14,7 @@ import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 ///      aToken; redemptions use the pinned pool and token without that drift check.
 ///      Previews are identity because Aave mints and burns aTokens at par. Withdrawals
 ///      remain subject to Aave liquidity and governance controls.
+/// @custom:security-contact security@getgrowapp.co
 contract AaveV3Adapter is IYieldAdapter {
     using SafeERC20 for IERC20;
 
@@ -42,6 +43,10 @@ contract AaveV3Adapter is IYieldAdapter {
         _;
     }
 
+    /// @param pool_ Aave V3 pool for the reserve.
+    /// @param dataProvider_ Aave data provider used for the aToken drift check.
+    /// @param asset_ Underlying ERC-20 of the reserve.
+    /// @param executor_ GrowYield executor authorized to call this adapter.
     constructor(
         IAaveV3Pool pool_,
         IAaveProtocolDataProvider dataProvider_,

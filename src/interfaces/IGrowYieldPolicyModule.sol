@@ -58,11 +58,24 @@ interface IGrowYieldPolicyModule is IValidationModule {
     /// @notice Paymaster required for every policy-authorized UserOperation.
     function requiredPaymaster() external view returns (address);
 
+    /// @notice Maximum account verification gas accepted by the policy.
     function maxVerificationGas() external view returns (uint128);
+
+    /// @notice Maximum account call gas accepted by the policy.
     function maxCallGas() external view returns (uint128);
+
+    /// @notice Maximum pre-verification gas accepted by the policy.
     function maxPreVerificationGas() external view returns (uint256);
+
+    /// @notice Maximum paymaster verification gas accepted by the policy.
     function maxPaymasterVerificationGas() external view returns (uint128);
+
+    /// @notice Maximum paymaster post-operation gas accepted by the policy.
     function maxPaymasterPostOpGas() external view returns (uint128);
+
+    /// @notice Maximum priority fee accepted by the policy.
     function maxPriorityFeePerGas() external view returns (uint128);
+
+    /// @notice Maximum total fee accepted by the policy.
     function maxFeePerGas() external view returns (uint128);
 }
