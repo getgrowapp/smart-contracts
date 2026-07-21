@@ -8,6 +8,7 @@ import {
 
 import {IGrowYieldExecutor, Operation} from "./interfaces/IGrowYieldExecutor.sol";
 
+/// @title GrowYieldPolicyLib
 /// @notice Static calldata policy for Grow yield automation batches.
 /// @dev Accepts only the canonical form:
 ///
@@ -18,6 +19,7 @@ import {IGrowYieldExecutor, Operation} from "./interfaces/IGrowYieldExecutor.sol
 ///      Tokens are the unique declared operation source tokens in first-appearance
 ///      order. The executor verifies each declaration before transferring funds.
 ///      Malformed ABI reverts; the validation module contains it with a self-call.
+/// @custom:security-contact security@getgrowapp.co
 library GrowYieldPolicyLib {
     /// @dev Validation-phase gas bound; covers deposit, withdraw, reallocate, and
     ///      small multi-venue rebalances.
@@ -27,6 +29,7 @@ library GrowYieldPolicyLib {
 
     bytes4 private constant APPROVE = bytes4(keccak256("approve(address,uint256)"));
 
+    /// @notice True if `callData` is a canonical approve/execute/revoke batch for `account`.
     function isAllowed(address account, address executor, bytes memory callData)
         internal
         pure
@@ -118,6 +121,7 @@ library GrowYieldPolicyLib {
         }
     }
 
+    /// @dev True if the call is exactly `approve(executor, amount)`.
     function _approval(Call memory call_, address executor, uint256 amount)
         private
         pure
@@ -132,11 +136,13 @@ library GrowYieldPolicyLib {
         return spender == executor && actualAmount == amount;
     }
 
+    /// @dev Shared call checks: no value, nonzero non-self target, selector present.
     function _basic(address account, Call memory call_) private pure returns (bool) {
         return call_.value == 0 && call_.target != address(0) && call_.target != account
             && call_.data.length >= 4;
     }
 
+    /// @dev First four bytes of `data`, or zero if too short.
     function _selector(bytes memory data) private pure returns (bytes4 result) {
         if (data.length < 4) return bytes4(0);
 
@@ -145,6 +151,7 @@ library GrowYieldPolicyLib {
         }
     }
 
+    /// @dev Copies the ABI arguments (everything after the selector).
     function _args(bytes memory data) private pure returns (bytes memory out) {
         if (data.length < 4) return bytes("");
 

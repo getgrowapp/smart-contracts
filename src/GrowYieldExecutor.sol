@@ -21,6 +21,7 @@ import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 /// @notice Routes caller funds through fixed-registry adapters explicitly enabled by that caller.
 /// @dev Operations bind the source token, send output only to the caller, reject transfer-tax
 ///      tokens, enforce a loss-capped preview, and reject adapter code changes and residuals.
+/// @custom:security-contact security@getgrowapp.co
 contract GrowYieldExecutor is Ownable, ReentrancyGuardTransient, IGrowYieldExecutor {
     using SafeERC20 for IERC20;
 
@@ -29,6 +30,7 @@ contract GrowYieldExecutor is Ownable, ReentrancyGuardTransient, IGrowYieldExecu
     /// @notice Hard ceiling on the constructor-set loss cap (1%).
     uint16 public constant MAX_LOSS_BPS_CEILING = 100;
 
+    /// @dev Per-account directional volume limits and usage for one adapter epoch.
     struct AdapterPolicy {
         uint256 depositLimit;
         uint256 redeemLimit;
@@ -52,6 +54,7 @@ contract GrowYieldExecutor is Ownable, ReentrancyGuardTransient, IGrowYieldExecu
 
     mapping(address account => mapping(address adapter => AdapterPolicy)) private _policies;
 
+    /// @dev Requires the one-time registry attachment to have occurred.
     modifier onlyInitialized() {
         if (address(registry) == address(0)) {
             revert Uninitialized();
@@ -159,6 +162,7 @@ contract GrowYieldExecutor is Ownable, ReentrancyGuardTransient, IGrowYieldExecu
         }
     }
 
+    /// @dev Validates, funds, and executes one operation; enforces budget and output floors.
     function _run(
         Operation calldata op,
         address previousOutputToken,
@@ -233,6 +237,7 @@ contract GrowYieldExecutor is Ownable, ReentrancyGuardTransient, IGrowYieldExecu
         emit Executed(msg.sender, adapterAddress, op.kind, amount, receivedOut);
     }
 
+    /// @dev Shared policy-write path; `resetUsage` starts a fresh epoch.
     function _setAdapterPolicy(
         address adapter,
         uint256 depositLimit_,
@@ -287,6 +292,7 @@ contract GrowYieldExecutor is Ownable, ReentrancyGuardTransient, IGrowYieldExecu
         );
     }
 
+    /// @dev Resolves the source amount for the operation's declared amount mode.
     function _resolveAmount(
         Operation calldata op,
         IERC20 sourceToken,

@@ -11,6 +11,7 @@ import {AbstractEulerAdapter} from "./AbstractEulerAdapter.sol";
 /// @dev Authenticity is proven by the pinned EVK GenericFactory's `isProxy` registry.
 ///      The vault's `asset()` is re-checked on every operation against the pinned
 ///      underlying so a miswired or drifted vault cannot be used silently.
+/// @custom:security-contact security@getgrowapp.co
 contract EulerEVaultAdapter is AbstractEulerAdapter {
     /// @notice Canonical EVK GenericFactory used to authenticate the vault proxy.
     IEulerEVaultFactory public immutable factory;

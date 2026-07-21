@@ -21,6 +21,7 @@ import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 ///      matching asset, and an immutable adapter set. Deposits re-check child
 ///      eligibility, liquidity routing, and the caller's current round-trip gates.
 ///      Later gate changes, liquidity, or venue governance can still impair exits.
+/// @custom:security-contact security@getgrowapp.co
 contract MorphoVaultV2Adapter is IYieldAdapter {
     using SafeERC20 for IERC20;
 
@@ -54,6 +55,11 @@ contract MorphoVaultV2Adapter is IYieldAdapter {
         _;
     }
 
+    /// @param wrapper_ VaultV2 wrapper used as the position token.
+    /// @param factory_ Canonical VaultV2 factory authenticating the wrapper.
+    /// @param adapterFactory_ Factory authenticating the wrapper's VaultV1 liquidity adapter.
+    /// @param eligibility_ Eligibility oracle for the Morpho VaultV1 child.
+    /// @param executor_ GrowYield executor authorized to call this adapter.
     constructor(
         IVaultV2 wrapper_,
         IVaultV2Factory factory_,
