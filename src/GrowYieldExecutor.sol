@@ -207,27 +207,29 @@ contract GrowYieldExecutor is Ownable2Step, ReentrancyGuardTransient, IGrowYield
         if (amount == 0) revert NoBalance();
         _consumeBudget(accountPolicy, isDeposit, amount);
 
-        uint256 expected =
-            isDeposit ? adapter.previewDeposit(amount) : adapter.previewRedeem(amount);
-        if (expected == 0) revert InsufficientOutput();
-
         uint256 adapterSourceBefore = sourceToken.balanceOf(adapterAddress);
         uint256 adapterOutputBefore = outputToken.balanceOf(adapterAddress);
         uint256 outputBefore = outputToken.balanceOf(msg.sender);
 
         sourceToken.safeTransferFrom(msg.sender, adapterAddress, amount);
-        if (sourceToken.balanceOf(adapterAddress) - adapterSourceBefore != amount) {
-            revert UnsupportedToken();
-        }
+        uint256 sent = sourceToken.balanceOf(adapterAddress) - adapterSourceBefore;
+        // Rebasing position tokens (aTokens) settle transfers in scaled units and may
+        // deliver one wei off the requested amount; larger deviations are fee-on-transfer
+        // behavior and unsupported. The adapter operates on the measured amount.
+        if (sent + 1 < amount || sent > amount + 1) revert UnsupportedToken();
+
+        uint256 expected = isDeposit ? adapter.previewDeposit(sent) : adapter.previewRedeem(sent);
+        if (expected == 0) revert InsufficientOutput();
 
         if (isDeposit) {
-            adapter.deposit(amount, msg.sender);
+            adapter.deposit(sent, msg.sender);
         } else {
-            adapter.redeem(amount, msg.sender);
+            adapter.redeem(sent, msg.sender);
         }
 
+        // A rebasing burn that rounds up may strand one wei of source on the adapter.
         if (
-            sourceToken.balanceOf(adapterAddress) > adapterSourceBefore
+            sourceToken.balanceOf(adapterAddress) > adapterSourceBefore + 1
                 || outputToken.balanceOf(adapterAddress) > adapterOutputBefore
         ) revert ResidualBalance();
 
@@ -236,7 +238,7 @@ contract GrowYieldExecutor is Ownable2Step, ReentrancyGuardTransient, IGrowYield
         uint256 minimumOut = Math.max(previewMinimum, op.minAmountOut);
         if (receivedOut == 0 || receivedOut < minimumOut) revert InsufficientOutput();
 
-        emit Executed(msg.sender, adapterAddress, op.kind, amount, receivedOut);
+        emit Executed(msg.sender, adapterAddress, op.kind, sent, receivedOut);
     }
 
     /// @dev Shared policy-write path; `resetUsage` starts a fresh epoch.
