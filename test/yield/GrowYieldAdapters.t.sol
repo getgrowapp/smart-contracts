@@ -15,9 +15,7 @@ import {MorphoVaultV2Adapter} from "../../src/adapters/MorphoVaultV2Adapter.sol"
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
 import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
-import {
-    IGrowYieldAdapterRegistry
-} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {IYieldAdapter} from "../../src/interfaces/IYieldAdapter.sol";
 import {MockUnderlying, MockVault} from "../invariant/MockYieldVenues.sol";
 import {

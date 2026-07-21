@@ -21,9 +21,7 @@ import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
 import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
 import {AaveV3Adapter} from "../../src/adapters/AaveV3Adapter.sol";
 import {MorphoVaultV2Adapter} from "../../src/adapters/MorphoVaultV2Adapter.sol";
-import {
-    IGrowYieldAdapterRegistry
-} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";

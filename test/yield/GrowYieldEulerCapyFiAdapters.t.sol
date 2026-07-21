@@ -22,9 +22,7 @@ import {
     Operation,
     OperationKind
 } from "../../src/interfaces/IGrowYieldExecutor.sol";
-import {
-    IGrowYieldAdapterRegistry
-} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {MockUnderlying} from "../invariant/MockYieldVenues.sol";
 import {
     MockCapyFiComptroller,

@@ -18,9 +18,7 @@ import {EulerEVaultAdapter} from "../src/adapters/EulerEVaultAdapter.sol";
 import {MorphoVaultV2Adapter} from "../src/adapters/MorphoVaultV2Adapter.sol";
 import {GrowYieldAdapterRegistry} from "../src/GrowYieldAdapterRegistry.sol";
 import {GrowYieldExecutor} from "../src/GrowYieldExecutor.sol";
-import {
-    IGrowYieldAdapterRegistry
-} from "../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {IGrowYieldAdapterRegistry} from "../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {IAaveV3Pool} from "../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../src/interfaces/IAaveProtocolDataProvider.sol";
 import {ICapyFiCaToken} from "../src/interfaces/ICapyFiCaToken.sol";

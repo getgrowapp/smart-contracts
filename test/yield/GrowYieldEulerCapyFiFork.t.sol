@@ -14,14 +14,8 @@ import {ICapyFiCaToken} from "../../src/interfaces/ICapyFiCaToken.sol";
 import {ICapyFiComptroller} from "../../src/interfaces/ICapyFiComptroller.sol";
 import {IEulerEarnFactory} from "../../src/interfaces/IEulerEarnFactory.sol";
 import {IEulerEVaultFactory} from "../../src/interfaces/IEulerEVaultFactory.sol";
-import {
-    AmountMode,
-    Operation,
-    OperationKind
-} from "../../src/interfaces/IGrowYieldExecutor.sol";
-import {
-    IGrowYieldAdapterRegistry
-} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {AmountMode, Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
+import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 
 /// @notice Optional Base mainnet fork coverage for Euler EVK, Euler Earn, and CapyFi.
 /// @dev Requires `BASE_RPC_URL`. Skips if unset.

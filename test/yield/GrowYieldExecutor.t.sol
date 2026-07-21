@@ -16,9 +16,7 @@ import {
     Operation,
     OperationKind
 } from "../../src/interfaces/IGrowYieldExecutor.sol";
-import {
-    IGrowYieldAdapterRegistry
-} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {MockAavePool, MockUnderlying} from "../invariant/MockYieldVenues.sol";
 import {MockFeeToken, MockMutableAaveDataProvider} from "./mocks/MockVaultV2Stack.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";

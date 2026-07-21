@@ -9,14 +9,8 @@ import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
 import {AaveV3Adapter} from "../../src/adapters/AaveV3Adapter.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
-import {
-    AmountMode,
-    Operation,
-    OperationKind
-} from "../../src/interfaces/IGrowYieldExecutor.sol";
-import {
-    IGrowYieldAdapterRegistry
-} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {AmountMode, Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
+import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 
 /// @dev Aave V3 address book root; resolves current pool + data provider on fork.
 interface IPoolAddressesProvider {
