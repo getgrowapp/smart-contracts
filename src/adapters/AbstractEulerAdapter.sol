@@ -8,13 +8,11 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
 /// @title AbstractEulerAdapter
+/// @author 0xOsiris, Grow
 /// @notice Shared ERC-4626 deposit/redeem path for Euler EVK and Euler Earn vaults.
-/// @dev Subclasses supply only protocol-specific authenticity checks (factory proofs).
-///      Factory validation proves a genuine Euler deployment; Grow risk approval is
-///      registry inclusion. Deposit/redeem credit `receiver` directly via ERC-4626
-///      receiver parameters — the adapter never retains newly minted shares. It holds
-///      shares only when the executor has transferred them in for redemption, then
-///      consumes exactly that attributed amount.
+/// @dev Subclasses supply only protocol-specific authenticity checks (factory proofs);
+///      Grow risk approval is registry inclusion. The adapter retains no shares or
+///      assets — outputs credit `receiver` directly.
 abstract contract AbstractEulerAdapter is IYieldAdapter {
     using SafeERC20 for IERC20;
 

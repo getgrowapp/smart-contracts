@@ -16,6 +16,7 @@ import {IMorphoVaultEligibility} from "../interfaces/IMorphoVaultEligibility.sol
 import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
 /// @title MorphoVaultV2Adapter
+/// @author 0xOsiris, Grow
 /// @notice Morpho VaultV2 venue adapter for one wrapper vault.
 /// @dev The wrapper must have one factory-authenticated Morpho VaultV1 adapter, a
 ///      matching asset, and an immutable adapter set. Deposits re-check child
@@ -54,6 +55,11 @@ contract MorphoVaultV2Adapter is IYieldAdapter {
         _;
     }
 
+    /// @param wrapper_ VaultV2 wrapper used as the position token.
+    /// @param factory_ Canonical VaultV2 factory authenticating the wrapper.
+    /// @param adapterFactory_ Factory authenticating the wrapper's VaultV1 liquidity adapter.
+    /// @param eligibility_ Eligibility oracle for the Morpho VaultV1 child.
+    /// @param executor_ GrowYield executor authorized to call this adapter.
     constructor(
         IVaultV2 wrapper_,
         IVaultV2Factory factory_,

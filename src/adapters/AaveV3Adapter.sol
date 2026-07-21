@@ -9,6 +9,7 @@ import {IAaveProtocolDataProvider} from "../interfaces/IAaveProtocolDataProvider
 import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
 /// @title AaveV3Adapter
+/// @author 0xOsiris, Grow
 /// @notice Aave V3 venue adapter for one (pool, asset) reserve.
 /// @dev Only the executor may deposit or redeem. Deposits verify the reserve's current
 ///      aToken; redemptions use the pinned pool and token without that drift check.
@@ -42,6 +43,10 @@ contract AaveV3Adapter is IYieldAdapter {
         _;
     }
 
+    /// @param pool_ Aave V3 pool for the reserve.
+    /// @param dataProvider_ Aave data provider used for the aToken drift check.
+    /// @param asset_ Underlying ERC-20 of the reserve.
+    /// @param executor_ GrowYield executor authorized to call this adapter.
     constructor(
         IAaveV3Pool pool_,
         IAaveProtocolDataProvider dataProvider_,

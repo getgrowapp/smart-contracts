@@ -4,6 +4,7 @@ pragma solidity 0.8.36;
 import {IGrowYieldAdapterRegistry} from "./IGrowYieldAdapterRegistry.sol";
 import {IYieldAdapter} from "./IYieldAdapter.sol";
 
+/// @notice Direction of a yield operation.
 enum OperationKind {
     DEPOSIT,
     REDEEM

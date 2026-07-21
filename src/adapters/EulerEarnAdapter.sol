@@ -7,6 +7,7 @@ import {IEulerEarnFactory} from "../interfaces/IEulerEarnFactory.sol";
 import {AbstractEulerAdapter} from "./AbstractEulerAdapter.sol";
 
 /// @title EulerEarnAdapter
+/// @author 0xOsiris, Grow
 /// @notice Immutable GrowYield adapter for one Euler Earn vault.
 /// @dev Authenticity is proven by the pinned EulerEarnFactory's `isVault` registry.
 ///      The vault's `asset()` is re-checked on every operation against the pinned

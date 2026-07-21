@@ -3,6 +3,7 @@ pragma solidity 0.8.36;
 
 /// @notice Minimal EVK GenericFactory surface used to authenticate EVault proxies.
 interface IEulerEVaultFactory {
+    /// @notice Proxy metadata tracked by the factory.
     struct ProxyConfig {
         bool upgradeable;
         address implementation;

@@ -10,17 +10,12 @@ import {ICapyFiComptroller} from "../interfaces/ICapyFiComptroller.sol";
 import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
 /// @title CapyFiAdapter
+/// @author 0xOsiris, Grow
 /// @notice Immutable GrowYield adapter for one Compound-v2-style CapyFi caToken market.
 /// @dev Pins the executor, Comptroller, caToken, and underlying. Comptroller/listing
 ///      checks prove CapyFi protocol authenticity only; Grow risk approval is registry
 ///      inclusion. Every operation re-checks comptroller binding, listing, and
-///      underlying. Compound return codes are enforced; non-zero mint/redeem revert.
-///
-///      Deposit: forceApprove → mint (credits adapter) → clear allowance → transfer
-///      minted caTokens to `receiver`.
-///      Redeem: executor transfers exact caTokens here → `redeem(shares)` → transfer
-///      all resulting underlying to `receiver`. A clean operation (no prior donations)
-///      finishes with zero caToken, underlying, and caToken allowances on the adapter.
+///      underlying; non-zero Compound mint/redeem return codes revert.
 contract CapyFiAdapter is IYieldAdapter {
     using SafeERC20 for IERC20;
 

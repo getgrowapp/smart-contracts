@@ -18,6 +18,7 @@ import {IGrowYieldPolicyModule} from "./interfaces/IGrowYieldPolicyModule.sol";
 import {GrowYieldPolicyLib} from "./GrowYieldPolicyLib.sol";
 
 /// @title GrowYieldPolicyModule
+/// @author 0xOsiris, Grow
 /// @notice Validates sponsor-paid yield UserOperations signed by an account's policy owners.
 /// @dev Validation uses only ECDSA recovery, immutable policy limits, and account-associated
 ///      storage.
@@ -72,6 +73,7 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
 
     mapping(address account => AccountConfig) private _accountConfigs;
 
+    /// @dev Pins the executor, required paymaster, and all gas/fee ceilings immutably.
     constructor(
         address executor_,
         address requiredPaymaster_,
@@ -252,6 +254,7 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
             || super.supportsInterface(interfaceId);
     }
 
+    /// @dev Appends a unique nonzero owner below the `MAX_OWNERS` bound.
     function _addOwner(address account, address owner) private {
         if (owner == address(0)) revert InvalidConfiguration();
 
@@ -268,6 +271,7 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
         emit OwnerAdded(account, owner);
     }
 
+    /// @dev Deletes the account's entity and every stored policy owner.
     function _clearAccountConfig(address account) private {
         AccountConfig storage accountConfig = _accountConfigs[account];
         uint8 count = accountConfig.count;
@@ -280,6 +284,7 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
         accountConfig.entityId = 0;
     }
 
+    /// @dev True if every account gas and fee field is within the policy ceilings.
     function _gasPolicyAllows(PackedUserOperation calldata userOp) private view returns (bool) {
         return userOp.unpackVerificationGasLimit() <= maxVerificationGas
             && userOp.unpackCallGasLimit() <= maxCallGas
@@ -288,6 +293,7 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
             && userOp.unpackMaxFeePerGas() <= maxFeePerGas;
     }
 
+    /// @dev True if the required paymaster is used within its gas ceilings.
     function _paymasterPolicyAllows(bytes calldata paymasterAndData) private view returns (bool) {
         if (
             paymasterAndData.length < PAYMASTER_STATIC_FIELDS_LENGTH

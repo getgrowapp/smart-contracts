@@ -5,19 +5,13 @@ import {IGrowYieldExecutor} from "../src/interfaces/IGrowYieldExecutor.sol";
 import {IGrowYieldAdapterRegistry} from "../src/interfaces/IGrowYieldAdapterRegistry.sol";
 
 /// @title GrowYieldDeployer
+/// @author 0xOsiris, Grow
 /// @notice Deterministic CREATE2 deployer for the GrowYield stack.
-/// @dev Deployed once at a chain-independent address (salt 0 via the canonical CREATE2
-///      factory), so the same address serves every environment and chain. Because this
-///      contract is the CREATE2 caller for the executor, it becomes the executor's
-///      immutable `registryInitializer`. `deployStack` therefore deploys the executor,
-///      policy module, adapters, and registry AND calls `initializeRegistry` inside a
-///      single transaction, leaving no cross-transaction window in which a foreign
-///      registry could be wired into the executor.
-///
-///      Front-running note: like any shared CREATE2 factory, an observer who copies the
-///      exact salts and init codes from a pending `deployStack` call can occupy the target
-///      addresses first. Run deploys from a controlled/private endpoint; if an address is
-///      already taken the call reverts and a fresh salt yields a clean redeploy.
+/// @dev Deployed once at a chain-independent address. As the executor's CREATE2 caller it
+///      is the immutable `registryInitializer`, so `deployStack` deploys the full stack
+///      and wires the registry in one transaction — no window for a foreign registry.
+///      Pending `deployStack` calldata can be front-run to occupy the target addresses;
+///      deploy from a private endpoint, or redeploy with fresh salts if taken.
 contract GrowYieldDeployer {
     /// @notice A CREATE2 deployment returned the zero address or produced no code.
     error DeploymentFailed();
