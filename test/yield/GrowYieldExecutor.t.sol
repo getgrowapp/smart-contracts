@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
 import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
@@ -86,6 +87,72 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
     function _execute(Operation[] memory ops) internal returns (uint256[] memory) {
         vm.prank(account);
         return executor.execute(ops);
+    }
+
+    function _newUninitializedExecutor()
+        private
+        returns (GrowYieldExecutor freshExecutor, GrowYieldAdapterRegistry freshRegistry)
+    {
+        freshExecutor = new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian);
+        MockUnderlying freshUnderlying = new MockUnderlying();
+        MockAavePool freshPool = new MockAavePool(freshUnderlying);
+        MockMutableAaveDataProvider freshProvider =
+            new MockMutableAaveDataProvider(address(freshUnderlying), address(freshPool.aToken()));
+        AaveV3Adapter freshAdapter = new AaveV3Adapter(
+            IAaveV3Pool(address(freshPool)),
+            IAaveProtocolDataProvider(address(freshProvider)),
+            address(freshUnderlying),
+            address(freshExecutor)
+        );
+        IGrowYieldAdapterRegistry.AdapterConfig[] memory configs =
+            new IGrowYieldAdapterRegistry.AdapterConfig[](1);
+        configs[0] = IGrowYieldAdapterRegistry.AdapterConfig(address(freshAdapter), true, true);
+        freshRegistry = new GrowYieldAdapterRegistry(address(freshExecutor), configs);
+    }
+
+    function test_constructor_setsOwnerToMsgSender() public view {
+        assertEq(executor.owner(), address(this));
+    }
+
+    function test_execute_revertsWhenRegistryUninitialized() public {
+        GrowYieldExecutor uninitialized = new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian);
+        Operation[] memory ops = new Operation[](0);
+
+        vm.expectRevert(IGrowYieldExecutor.Uninitialized.selector);
+        uninitialized.execute(ops);
+    }
+
+    function test_initializeRegistry_onlyOwnerCanInitialize() public {
+        (GrowYieldExecutor freshExecutor, GrowYieldAdapterRegistry freshRegistry) =
+            _newUninitializedExecutor();
+        address stranger = makeAddr("stranger");
+
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger)
+        );
+        freshExecutor.initializeRegistry(freshRegistry);
+        assertEq(address(freshExecutor.registry()), address(0));
+
+        freshExecutor.initializeRegistry(freshRegistry);
+        assertEq(address(freshExecutor.registry()), address(freshRegistry));
+    }
+
+    function test_initializeRegistry_transferredOwnerCanInitialize() public {
+        (GrowYieldExecutor freshExecutor, GrowYieldAdapterRegistry freshRegistry) =
+            _newUninitializedExecutor();
+        address newOwner = makeAddr("newOwner");
+        freshExecutor.transferOwnership(newOwner);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this))
+        );
+        freshExecutor.initializeRegistry(freshRegistry);
+
+        vm.prank(newOwner);
+        freshExecutor.initializeRegistry(freshRegistry);
+        assertEq(freshExecutor.owner(), newOwner);
+        assertEq(address(freshExecutor.registry()), address(freshRegistry));
     }
 
     // --- deposits ---

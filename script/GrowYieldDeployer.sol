@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.36;
 
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+
 import {IGrowYieldExecutor} from "../src/interfaces/IGrowYieldExecutor.sol";
 import {IGrowYieldAdapterRegistry} from "../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {IGrowYieldPolicyModule} from "../src/interfaces/IGrowYieldPolicyModule.sol";
+import {IYieldAdapter} from "../src/interfaces/IYieldAdapter.sol";
 
 /// @title GrowYieldDeployer
 /// @notice Deterministic CREATE2 deployer for the GrowYield stack.
 /// @dev Deployed once at a chain-independent address (salt 0 via the canonical CREATE2
 ///      factory), so the same address serves every environment and chain. Because this
-///      contract is the CREATE2 caller for the executor, it becomes the executor's
-///      immutable `registryInitializer`. `deployStack` therefore deploys the executor,
+///      contract is the CREATE2 caller for the executor, it becomes the executor owner.
+///      `deployStack` therefore deploys the executor,
 ///      policy module, adapters, and registry AND calls `initializeRegistry` inside a
 ///      single transaction, leaving no cross-transaction window in which a foreign
 ///      registry could be wired into the executor.
@@ -21,6 +25,9 @@ import {IGrowYieldAdapterRegistry} from "../src/interfaces/IGrowYieldAdapterRegi
 contract GrowYieldDeployer {
     /// @notice A CREATE2 deployment returned the zero address or produced no code.
     error DeploymentFailed();
+
+    /// @notice A deployed contract granted authority to an unexpected address.
+    error InvalidAuthority();
 
     /// @notice Atomically deploys the full stack and wires the registry into the executor.
     /// @param executorSalt CREATE2 salt for the executor.
@@ -53,20 +60,34 @@ contract GrowYieldDeployer {
             address registry
         )
     {
-        // Executor first: this contract is the CREATE2 caller, so it is the executor's
-        // registryInitializer and may perform the one-time registry wiring below.
+        // Executor first: this contract is the CREATE2 caller, so it owns the executor
+        // and may perform the one-time registry wiring below.
         executor = _create2(executorSalt, executorInit);
+        if (Ownable(executor).owner() != address(this)) {
+            revert InvalidAuthority();
+        }
+
         policyModule = _create2(policySalt, policyInit);
+        if (IGrowYieldPolicyModule(policyModule).executor() != executor) {
+            revert InvalidAuthority();
+        }
 
         adapters = new address[](adapterInits.length);
         for (uint256 i; i < adapterInits.length; ++i) {
             adapters[i] = _create2(adapterSalts[i], adapterInits[i]);
+            if (IYieldAdapter(adapters[i]).executor() != executor) revert InvalidAuthority();
         }
 
         registry = _create2(registrySalt, registryInit);
+        if (IGrowYieldAdapterRegistry(registry).executor() != executor) {
+            revert InvalidAuthority();
+        }
 
         // Same transaction as the deployments above: no window for a foreign registry.
         IGrowYieldExecutor(executor).initializeRegistry(IGrowYieldAdapterRegistry(registry));
+        if (address(IGrowYieldExecutor(executor).registry()) != registry) {
+            revert InvalidAuthority();
+        }
     }
 
     /// @dev Deploys `initCode` with CREATE2 and reverts unless code lands at the address.
