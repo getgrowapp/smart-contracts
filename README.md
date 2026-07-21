@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="docs/ARCHITECTURE.md">Architecture</a> •
-  <a href="SECURITY.md">Security</a> •
+  <a href="SECURITY.md">Security</a> 
 </p>
 
 ## Overview
