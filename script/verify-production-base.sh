@@ -63,16 +63,16 @@ verify 0xC100691d7a8421477bE09CCC0F4d185144E2d085 src/adapters/MorphoVaultV2Adap
     0xa157a87D41ef25d033082180858DB0813ad61d39 0x4501125508079A99ebBebCE205DeC9593C2b5857 0xF42D9c36b34c9c2CF3Bc30eD2a52a90eEB604642 0x006A9c616E87F10635896D3B16D1E6922B5Ace16 "$EXECUTOR")"
 
 verify 0x21490160229E4d9586cfF8D9537b6fCbB4FF4Af0 src/adapters/EulerEVaultAdapter.sol:EulerEVaultAdapter \
-  --constructor-args "$(cast abi-encode "constructor(address,address,address,address)" \
-    0x7F321498A801A191a93C840750ed637149dDf8D0 0x0A1a3b5f2041F33522C4efc754a7D096f880eE16 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 "$EXECUTOR")"
+  --constructor-args "$(cast abi-encode "constructor(address,address,address)" \
+    0x7F321498A801A191a93C840750ed637149dDf8D0 0x0A1a3b5f2041F33522C4efc754a7D096f880eE16 "$EXECUTOR")"
 
 verify 0xbBa5E40133Df5Bdf89C01c5794ec24bDc5B96Cc8 src/adapters/EulerEarnAdapter.sol:EulerEarnAdapter \
-  --constructor-args "$(cast abi-encode "constructor(address,address,address,address)" \
-    0x75F49a2621b6DeC6a5baB22ce961bF3e676EFAE6 0x1c66B3A163e1998D9235E24e782d3d54aDEa094E 0x8bF41Ad2b816F7c220b22F4BCD63fC2A35Ab4247 "$EXECUTOR")"
+  --constructor-args "$(cast abi-encode "constructor(address,address,address,address,address)" \
+    0x75F49a2621b6DeC6a5baB22ce961bF3e676EFAE6 0x1c66B3A163e1998D9235E24e782d3d54aDEa094E 0x8bF41Ad2b816F7c220b22F4BCD63fC2A35Ab4247 0x0000000000000000000000000000000000000000 "$EXECUTOR")"
 
 verify 0x9A918b6B3BF86Da156B1CD1571e4cab4CDbdbc1b src/adapters/CapyFiAdapter.sol:CapyFiAdapter \
-  --constructor-args "$(cast abi-encode "constructor(address,address,address,address)" \
-    "$EXECUTOR" 0x00dc4965916e03A734190fA382633657c71f867E 0x5aDb71adb317CE975A405e90335068F0aF9F26C7 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913)"
+  --constructor-args "$(cast abi-encode "constructor(address,address,address)" \
+    "$EXECUTOR" 0x00dc4965916e03A734190fA382633657c71f867E 0x5aDb71adb317CE975A405e90335068F0aF9F26C7)"
 
 REGISTRY_ARGS=$(cast abi-encode "constructor(address,(address,bool,bool)[])" "$EXECUTOR" \
   "[(0x47f181316C96ee9045c7f5eFfACa47C23658478a,true,true),(0xC100691d7a8421477bE09CCC0F4d185144E2d085,true,true),(0x21490160229E4d9586cfF8D9537b6fCbB4FF4Af0,true,true),(0xbBa5E40133Df5Bdf89C01c5794ec24bDc5B96Cc8,true,true),(0x9A918b6B3BF86Da156B1CD1571e4cab4CDbdbc1b,true,true)]")

@@ -14,6 +14,7 @@ import {EulerEVaultAdapter} from "../../src/adapters/EulerEVaultAdapter.sol";
 import {ICapyFiCaToken} from "../../src/interfaces/ICapyFiCaToken.sol";
 import {ICapyFiComptroller} from "../../src/interfaces/ICapyFiComptroller.sol";
 import {IEulerEarnFactory} from "../../src/interfaces/IEulerEarnFactory.sol";
+import {IEulerStrategyEligibility} from "../../src/interfaces/IEulerStrategyEligibility.sol";
 import {IEulerEVaultFactory} from "../../src/interfaces/IEulerEVaultFactory.sol";
 import {
     AmountMode,
@@ -30,6 +31,7 @@ import {
     MockEulerEarnFactory,
     MockEulerEarnVault,
     MockEulerEVaultFactory,
+    MockEulerStrategyEligibility,
     MockEulerVault
 } from "./mocks/MockEulerCapyFiStack.sol";
 
@@ -47,6 +49,7 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
 
     MockEulerEVaultFactory internal evkFactory;
     MockEulerEarnFactory internal earnFactory;
+    MockEulerStrategyEligibility internal earnEligibility;
     MockEulerVault internal evault;
     MockEulerVault internal earnChild;
     MockEulerEarnVault internal earnVault;
@@ -68,8 +71,10 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
 
         evkFactory = new MockEulerEVaultFactory();
         earnFactory = new MockEulerEarnFactory();
+        earnEligibility = new MockEulerStrategyEligibility();
         evault = new MockEulerVault(IERC20(address(underlying)), "eUSD", "eUSD");
         earnChild = new MockEulerVault(IERC20(address(underlying)), "child", "child");
+        earnEligibility.set(address(earnChild), true);
         earnVault = new MockEulerEarnVault(
             IERC20(address(underlying)), IERC4626(address(earnChild)), "eeUSD", "eeUSD"
         );
@@ -77,15 +82,13 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
         earnFactory.setVault(address(earnVault), true);
 
         evaultAdapter = new EulerEVaultAdapter(
-            IEulerEVaultFactory(address(evkFactory)),
-            IERC4626(address(evault)),
-            address(underlying),
-            address(executor)
+            IEulerEVaultFactory(address(evkFactory)), IERC4626(address(evault)), address(executor)
         );
         earnAdapter = new EulerEarnAdapter(
             IEulerEarnFactory(address(earnFactory)),
             IERC4626(address(earnVault)),
             IERC4626(address(earnChild)),
+            IEulerStrategyEligibility(address(earnEligibility)),
             address(executor)
         );
 
@@ -93,8 +96,7 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
         capyAdapter = new CapyFiAdapter(
             address(executor),
             ICapyFiComptroller(address(capyMarket.comptroller())),
-            ICapyFiCaToken(address(capyMarket.caToken())),
-            address(underlying)
+            ICapyFiCaToken(address(capyMarket.caToken()))
         );
 
         IGrowYieldAdapterRegistry.AdapterConfig[] memory configs =
@@ -178,32 +180,14 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
         // factory.isProxy(rogue) defaults false
         vm.expectRevert(AbstractEulerAdapter.NonCanonical.selector);
         new EulerEVaultAdapter(
-            IEulerEVaultFactory(address(evkFactory)),
-            IERC4626(address(rogue)),
-            address(underlying),
-            address(executor)
-        );
-    }
-
-    function test_evault_rejectsIncorrectAsset() public {
-        MockEulerVault wrong = new MockEulerVault(IERC20(address(otherUnderlying)), "w", "w");
-        evkFactory.setProxy(address(wrong), true);
-        vm.expectRevert(AbstractEulerAdapter.AssetMismatch.selector);
-        new EulerEVaultAdapter(
-            IEulerEVaultFactory(address(evkFactory)),
-            IERC4626(address(wrong)),
-            address(underlying),
-            address(executor)
+            IEulerEVaultFactory(address(evkFactory)), IERC4626(address(rogue)), address(executor)
         );
     }
 
     function test_evault_rejectsZeroFactory() public {
         vm.expectRevert(AbstractEulerAdapter.Invalid.selector);
         new EulerEVaultAdapter(
-            IEulerEVaultFactory(address(0)),
-            IERC4626(address(evault)),
-            address(underlying),
-            address(executor)
+            IEulerEVaultFactory(address(0)), IERC4626(address(evault)), address(executor)
         );
     }
 
@@ -216,6 +200,7 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
             IEulerEarnFactory(address(earnFactory)),
             IERC4626(address(rogue)),
             IERC4626(address(earnChild)),
+            IEulerStrategyEligibility(address(earnEligibility)),
             address(executor)
         );
     }
@@ -231,22 +216,24 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
             IEulerEarnFactory(address(earnFactory)),
             IERC4626(address(unlocked)),
             IERC4626(address(earnChild)),
+            IEulerStrategyEligibility(address(earnEligibility)),
             address(executor)
         );
     }
 
-    function test_earn_rejectsChildAssetMismatch() public {
-        MockEulerVault wrongChild =
-            new MockEulerVault(IERC20(address(otherUnderlying)), "wrong", "wrong");
+    function test_earn_rejectsIneligibleChild() public {
+        MockEulerVault rogueChild =
+            new MockEulerVault(IERC20(address(underlying)), "rogue", "rogue");
         MockEulerEarnVault vault = new MockEulerEarnVault(
-            IERC20(address(underlying)), IERC4626(address(wrongChild)), "w", "w"
+            IERC20(address(underlying)), IERC4626(address(rogueChild)), "w", "w"
         );
         earnFactory.setVault(address(vault), true);
-        vm.expectRevert(EulerEarnAdapter.ChildAssetMismatch.selector);
+        vm.expectRevert(EulerEarnAdapter.ChildNotEligible.selector);
         new EulerEarnAdapter(
             IEulerEarnFactory(address(earnFactory)),
             IERC4626(address(vault)),
-            IERC4626(address(wrongChild)),
+            IERC4626(address(rogueChild)),
+            IEulerStrategyEligibility(address(earnEligibility)),
             address(executor)
         );
     }
@@ -265,6 +252,7 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
             IEulerEarnFactory(address(earnFactory)),
             IERC4626(address(vault)),
             IERC4626(address(earnChild)),
+            IEulerStrategyEligibility(address(earnEligibility)),
             address(executor)
         );
     }
@@ -280,6 +268,7 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
             IEulerEarnFactory(address(earnFactory)),
             IERC4626(address(vault)),
             IERC4626(address(earnChild)),
+            IEulerStrategyEligibility(address(earnEligibility)),
             address(executor)
         );
     }
@@ -297,10 +286,7 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
         other.setListed(caToken, true);
         vm.expectRevert(CapyFiAdapter.VenueDrift.selector);
         new CapyFiAdapter(
-            address(executor),
-            ICapyFiComptroller(address(other)),
-            ICapyFiCaToken(caToken),
-            address(underlying)
+            address(executor), ICapyFiComptroller(address(other)), ICapyFiCaToken(caToken)
         );
     }
 
@@ -311,23 +297,7 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
         market.comptroller().setListed(caToken, false);
         vm.expectRevert(CapyFiAdapter.VenueDrift.selector);
         new CapyFiAdapter(
-            address(executor),
-            ICapyFiComptroller(comptroller),
-            ICapyFiCaToken(caToken),
-            address(underlying)
-        );
-    }
-
-    function test_capy_rejectsIncorrectUnderlying() public {
-        MockCapyFiMarket market = new MockCapyFiMarket(underlying);
-        address comptroller = address(market.comptroller());
-        address caToken = address(market.caToken());
-        vm.expectRevert(CapyFiAdapter.VenueDrift.selector);
-        new CapyFiAdapter(
-            address(executor),
-            ICapyFiComptroller(comptroller),
-            ICapyFiCaToken(caToken),
-            address(otherUnderlying)
+            address(executor), ICapyFiComptroller(comptroller), ICapyFiCaToken(caToken)
         );
     }
 
@@ -634,10 +604,7 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
         // Vault is registered only on the original factory, not otherFactory.
         vm.expectRevert(AbstractEulerAdapter.NonCanonical.selector);
         new EulerEVaultAdapter(
-            IEulerEVaultFactory(address(otherFactory)),
-            IERC4626(address(evault)),
-            address(underlying),
-            address(executor)
+            IEulerEVaultFactory(address(otherFactory)), IERC4626(address(evault)), address(executor)
         );
     }
 
@@ -648,8 +615,18 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
             IEulerEarnFactory(address(otherFactory)),
             IERC4626(address(earnVault)),
             IERC4626(address(earnChild)),
+            IEulerStrategyEligibility(address(earnEligibility)),
             address(executor)
         );
+    }
+
+    function test_earn_depositRevertsWhenChildDelisted() public {
+        underlying.mint(account, 100e6);
+        _approveMax(address(underlying));
+        Operation[] memory ops = _ops1(_op(earnAdapter, OperationKind.DEPOSIT, 100e6));
+        earnEligibility.set(address(earnChild), false);
+        vm.expectRevert(EulerEarnAdapter.ChildNotEligible.selector);
+        _execute(ops);
     }
 
     function test_registry_enumeratesEulerAndCapyAdapters() public view {

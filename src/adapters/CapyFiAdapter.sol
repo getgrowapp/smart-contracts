@@ -11,10 +11,9 @@ import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
 /// @title CapyFiAdapter
 /// @notice Immutable GrowYield adapter for one Compound-v2-style CapyFi caToken market.
-/// @dev Pins the executor, Comptroller, caToken, and underlying. Comptroller/listing
-///      checks prove CapyFi protocol authenticity only; Grow risk approval is registry
-///      inclusion. Every operation re-checks comptroller binding, listing, and
-///      underlying; non-zero Compound mint/redeem return codes revert.
+/// @dev Pins the executor, Comptroller, and caToken. Underlying is read from
+///      `caToken.underlying()` at construction and re-checked on every operation.
+///      Grow risk approval is registry inclusion.
 /// @custom:security-contact security@getgrowapp.co
 contract CapyFiAdapter is IYieldAdapter {
     using SafeERC20 for IERC20;
@@ -48,21 +47,15 @@ contract CapyFiAdapter is IYieldAdapter {
 
     /// @param executor_ GrowYield executor authorized to call this adapter.
     /// @param comptroller_ Canonical CapyFi Comptroller / Unitroller.
-    /// @param caToken_ Listed caToken market for `asset_`.
-    /// @param asset_ Underlying ERC-20 expected by the caToken.
-    constructor(
-        address executor_,
-        ICapyFiComptroller comptroller_,
-        ICapyFiCaToken caToken_,
-        address asset_
-    ) {
+    /// @param caToken_ Listed caToken market whose underlying is deposited.
+    constructor(address executor_, ICapyFiComptroller comptroller_, ICapyFiCaToken caToken_) {
         if (
             executor_.code.length == 0 || address(comptroller_).code.length == 0
-                || address(caToken_).code.length == 0 || asset_.code.length == 0
-        ) {
-            revert Invalid();
-        }
-        if (address(caToken_) == asset_) revert Invalid();
+                || address(caToken_).code.length == 0
+        ) revert Invalid();
+
+        address asset_ = caToken_.underlying();
+        if (asset_.code.length == 0 || address(caToken_) == asset_) revert Invalid();
 
         comptroller = comptroller_;
         caToken = caToken_;
@@ -128,8 +121,6 @@ contract CapyFiAdapter is IYieldAdapter {
         uint256 redeemError = caToken.redeem(shares);
         if (redeemError != 0) revert RedeemFailed(redeemError);
 
-        // Consume exactly the caller-attributed caToken amount. Pre-existing donations
-        // are deliberately not swept into an unrelated account's redemption.
         if (IERC20(address(caToken)).balanceOf(address(this)) != sharesBefore - shares) {
             revert ResidualBalance();
         }

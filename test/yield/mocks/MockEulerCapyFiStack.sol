@@ -13,7 +13,17 @@ import {ICapyFiComptroller} from "../../../src/interfaces/ICapyFiComptroller.sol
 import {IEulerEarn} from "../../../src/interfaces/IEulerEarn.sol";
 import {IEulerEarnFactory} from "../../../src/interfaces/IEulerEarnFactory.sol";
 import {IEulerEVaultFactory} from "../../../src/interfaces/IEulerEVaultFactory.sol";
+import {IEulerStrategyEligibility} from "../../../src/interfaces/IEulerStrategyEligibility.sol";
 import {MockUnderlying} from "../../invariant/MockYieldVenues.sol";
+
+/// @dev Settable Euler strategy eligibility oracle.
+contract MockEulerStrategyEligibility is IEulerStrategyEligibility {
+    mapping(address => bool) public isEligibleStrategy;
+
+    function set(address strategy, bool eligible) external {
+        isEligibleStrategy[strategy] = eligible;
+    }
+}
 
 /// @dev Settable EVK GenericFactory authenticity oracle.
 contract MockEulerEVaultFactory is IEulerEVaultFactory {

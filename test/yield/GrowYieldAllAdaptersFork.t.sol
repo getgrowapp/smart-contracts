@@ -24,6 +24,7 @@ import {ICapyFiCaToken} from "../../src/interfaces/ICapyFiCaToken.sol";
 import {ICapyFiComptroller} from "../../src/interfaces/ICapyFiComptroller.sol";
 import {IEulerEarnFactory} from "../../src/interfaces/IEulerEarnFactory.sol";
 import {IEulerEVaultFactory} from "../../src/interfaces/IEulerEVaultFactory.sol";
+import {IEulerStrategyEligibility} from "../../src/interfaces/IEulerStrategyEligibility.sol";
 import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
 import {AmountMode, Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
 import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
@@ -45,6 +46,18 @@ contract ForkMorphoEligibility is IMorphoVaultEligibility {
 
     function isEligibleVault(address vault) external view returns (bool) {
         return vault == allowed;
+    }
+}
+
+contract ForkEulerStrategyEligibility is IEulerStrategyEligibility {
+    address internal immutable allowed;
+
+    constructor(address allowed_) {
+        allowed = allowed_;
+    }
+
+    function isEligibleStrategy(address strategy) external view returns (bool) {
+        return strategy == allowed;
     }
 }
 
@@ -118,17 +131,19 @@ contract GrowYieldAllAdaptersForkTest is Test {
         evault = new EulerEVaultAdapter(
             IEulerEVaultFactory(EULER_EVAULT_FACTORY),
             IERC4626(EULER_EVAULT_USDC),
-            USDC,
             address(executor)
         );
+        ForkEulerStrategyEligibility eulerEligibility =
+            new ForkEulerStrategyEligibility(EULER_EARN_CHILD_USDC);
         earn = new EulerEarnAdapter(
             IEulerEarnFactory(EULER_EARN_FACTORY),
             IERC4626(EULER_EARN_GBY_USDC),
             IERC4626(EULER_EARN_CHILD_USDC),
+            IEulerStrategyEligibility(address(eulerEligibility)),
             address(executor)
         );
         capy = new CapyFiAdapter(
-            address(executor), ICapyFiComptroller(CAPY_COMPTROLLER), ICapyFiCaToken(CAPY_USDC), USDC
+            address(executor), ICapyFiComptroller(CAPY_COMPTROLLER), ICapyFiCaToken(CAPY_USDC)
         );
 
         IYieldAdapter[5] memory adapters = [

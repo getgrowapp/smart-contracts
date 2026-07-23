@@ -47,11 +47,42 @@ fi
 
 # gbyUSD child vault must be allowlisted on the Morpho eligibility oracle before adapter deploy.
 GBY_CHILD="0xbeeff7aE5E00Aae3Db302e4B0d8C883810a58100"
-ELIGIBILITY="0x006A9c616E87F10635896D3B16D1E6922B5Ace16"
-IS_ELIGIBLE=$(cast call "$ELIGIBILITY" "isEligibleVault(address)(bool)" "$GBY_CHILD" --rpc-url "$BASE_RPC_URL")
+MORPHO_ELIGIBILITY="0x006A9c616E87F10635896D3B16D1E6922B5Ace16"
+IS_ELIGIBLE=$(cast call "$MORPHO_ELIGIBILITY" "isEligibleVault(address)(bool)" "$GBY_CHILD" --rpc-url "$BASE_RPC_URL")
 if [ "$IS_ELIGIBLE" = "false" ]; then
   echo "Setting Morpho eligibility for gbyUSD child $GBY_CHILD ..."
-  cast send "$ELIGIBILITY" "setEligible(address,bool)" "$GBY_CHILD" true \
+  cast send "$MORPHO_ELIGIBILITY" "setEligible(address,bool)" "$GBY_CHILD" true \
+    --rpc-url "$BASE_RPC_URL" --private-key "$PRIVATE_KEY"
+fi
+
+# Euler gbyUSD wrapper child (Clearstar Earn USDC) must be allowlisted before adapter deploy.
+EULER_CHILD="0x8bF41Ad2b816F7c220b22F4BCD63fC2A35Ab4247"
+GROW_SAFE="0xe8D212F886109cbf01e8294E3640a6Fb05544ff3"
+EULER_ELIGIBILITY="${EULER_STRATEGY_ELIGIBILITY:-}"
+
+if [ -z "$EULER_ELIGIBILITY" ] || [ "$EULER_ELIGIBILITY" = "0x0000000000000000000000000000000000000000" ]; then
+  EULER_ELIGIBILITY=$(node -e "const j=require('./script/config/production.json'); process.stdout.write(j.adapters.eulerEarn?.[0]?.eligibility || '')")
+fi
+
+if [ -z "$EULER_ELIGIBILITY" ] || [ "$EULER_ELIGIBILITY" = "0x0000000000000000000000000000000000000000" ]; then
+  echo "Deploying EulerStrategyEligibility owned by Grow Safe ..."
+  EULER_ELIGIBILITY=$(forge create src/oracles/EulerStrategyEligibility.sol:EulerStrategyEligibility \
+    --constructor-args "$GROW_SAFE" \
+    --rpc-url "$BASE_RPC_URL" --private-key "$PRIVATE_KEY" --json | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).deployedTo))")
+  node -e "
+    const fs = require('fs');
+    const path = 'script/config/production.json';
+    const j = JSON.parse(fs.readFileSync(path, 'utf8'));
+    j.adapters.eulerEarn[0].eligibility = '$EULER_ELIGIBILITY';
+    fs.writeFileSync(path, JSON.stringify(j, null, 2) + '\n');
+  "
+  echo "EulerStrategyEligibility: $EULER_ELIGIBILITY"
+fi
+
+EULER_IS_ELIGIBLE=$(cast call "$EULER_ELIGIBILITY" "isEligibleStrategy(address)(bool)" "$EULER_CHILD" --rpc-url "$BASE_RPC_URL")
+if [ "$EULER_IS_ELIGIBLE" = "false" ]; then
+  echo "Setting Euler strategy eligibility for $EULER_CHILD ..."
+  cast send "$EULER_ELIGIBILITY" "setEligible(address,bool)" "$EULER_CHILD" true \
     --rpc-url "$BASE_RPC_URL" --private-key "$PRIVATE_KEY"
 fi
 

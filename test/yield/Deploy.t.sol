@@ -192,6 +192,7 @@ contract DeployTest is Test {
     function test_eulerEarnCfgDecodesInKeyOrder() public pure {
         string memory json = "{" '"canDeposit":true,' '"canRedeem":true,'
             '"childStrategy":"0x00000000000000000000000000000000000000C5",'
+            '"eligibility":"0x0000000000000000000000000000000000000EA3",'
             '"factory":"0x0000000000000000000000000000000000000EA1",'
             '"salt":"0x0000000000000000000000000000000000000000000000000000000000000013",'
             '"vault":"0x0000000000000000000000000000000000000EA2"' "}";
@@ -199,18 +200,31 @@ contract DeployTest is Test {
         assertTrue(c.canDeposit, "canDeposit");
         assertTrue(c.canRedeem, "canRedeem");
         assertEq(c.childStrategy, address(0xC5), "childStrategy");
+        assertEq(c.eligibility, address(0xEA3), "eligibility");
         assertEq(c.factory, address(0xEA1), "factory");
         assertEq(c.salt, bytes32(uint256(0x13)), "salt");
         assertEq(c.vault, address(0xEA2), "vault");
     }
 
+    function test_eulerEVaultCfgDecodesInKeyOrder() public pure {
+        string memory json = "{" '"canDeposit":true,' '"canRedeem":true,'
+            '"eVault":"0x0000000000000000000000000000000000000E01",'
+            '"factory":"0x0000000000000000000000000000000000000EA1",'
+            '"salt":"0x0000000000000000000000000000000000000000000000000000000000000012"' "}";
+        Deploy.EulerEVaultCfg memory c = abi.decode(vm.parseJson(json), (Deploy.EulerEVaultCfg));
+        assertTrue(c.canDeposit, "canDeposit");
+        assertTrue(c.canRedeem, "canRedeem");
+        assertEq(c.eVault, address(0xE01), "eVault");
+        assertEq(c.factory, address(0xEA1), "factory");
+        assertEq(c.salt, bytes32(uint256(0x12)), "salt");
+    }
+
     function test_capyFiCfgDecodesInKeyOrder() public pure {
-        string memory json = "{" '"asset":"0x00000000000000000000000000000000000000A5",'
-            '"caToken":"0x00000000000000000000000000000000000000CA",' '"canDeposit":false,'
-            '"canRedeem":true,' '"comptroller":"0x0000000000000000000000000000000000000C09",'
+        string memory json = "{" '"caToken":"0x00000000000000000000000000000000000000CA",'
+            '"canDeposit":false,' '"canRedeem":true,'
+            '"comptroller":"0x0000000000000000000000000000000000000C09",'
             '"salt":"0x0000000000000000000000000000000000000000000000000000000000000014"' "}";
         Deploy.CapyFiCfg memory c = abi.decode(vm.parseJson(json), (Deploy.CapyFiCfg));
-        assertEq(c.asset, address(0xA5), "asset");
         assertEq(c.caToken, address(0xCA), "caToken");
         assertFalse(c.canDeposit, "canDeposit");
         assertTrue(c.canRedeem, "canRedeem");

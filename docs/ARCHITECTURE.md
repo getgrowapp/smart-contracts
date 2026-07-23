@@ -255,8 +255,8 @@ protocol-specific subclasses perform only the venue proof:
 
 | Adapter | Pinned contracts | Authenticity proof | Why it proves a valid **protocol** deployment |
 |---|---|---|---|
-| `EulerEVaultAdapter` | EVK `GenericFactory`, EVault, executor | `factory.isProxy(vault)` and `vault.asset() == asset` | Only proxies created by the pinned EVK factory appear in `isProxy`; a fake ERC-4626 cannot pass. Underlying is read from `vault.asset()` at construction and re-checked on every op. **Not** a Grow risk approval. |
-| `EulerEarnAdapter` | EulerEarnFactory, locked Earn vault, pinned child strategy, executor | `factory.isVault(vault)`, renounced owner/curator, single supply/withdraw queue entry equal to `childStrategy`, and `childStrategy.asset() == vault.asset()` | Only factory-registered Earn vaults pass. The vault must be permanently locked (no owner, curator, or pending owner) and route only through the pinned child strategy whose underlying matches the vault asset. **Not** a Grow risk approval. |
+| `EulerEVaultAdapter` | EVK `GenericFactory`, EVault, executor | `factory.isProxy(vault)` and `vault.asset()` drift check | Underlying is read from `vault.asset()` at construction. **Not** a Grow risk approval. |
+| `EulerEarnAdapter` | EulerEarnFactory, locked Earn vault, pinned child strategy, eligibility oracle, executor | `factory.isVault(vault)`, renounced owner/curator, single supply/withdraw queue entry equal to `childStrategy`, `eligibility.isEligibleStrategy(childStrategy)`, child enabled in market config | Locked wrapper + allowlisted yield path. Eligibility is re-checked on every op so a delisted child blocks new deposits. **Not** a substitute for registry inclusion. |
 
 Both adapters re-run those checks before every deposit and redeem. Deposits use
 `forceApprove`, credit shares **directly** to the smart account via ERC-4626

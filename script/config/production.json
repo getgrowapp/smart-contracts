@@ -45,7 +45,6 @@
         "salt": "0x0000000000000000000000000000000000000000000000000000000000000032",
         "factory": "0x7F321498A801A191a93C840750ed637149dDf8D0",
         "eVault": "0x0A1a3b5f2041F33522C4efc754a7D096f880eE16",
-        "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
         "canDeposit": true,
         "canRedeem": true
       }
@@ -56,6 +55,7 @@
         "factory": "0x75F49a2621b6DeC6a5baB22ce961bF3e676EFAE6",
         "vault": "0x1c66B3A163e1998D9235E24e782d3d54aDEa094E",
         "childStrategy": "0x8bF41Ad2b816F7c220b22F4BCD63fC2A35Ab4247",
+        "eligibility": "0x0000000000000000000000000000000000000000",
         "canDeposit": true,
         "canRedeem": true
       }
@@ -65,7 +65,6 @@
         "salt": "0x0000000000000000000000000000000000000000000000000000000000000034",
         "comptroller": "0x00dc4965916e03A734190fA382633657c71f867E",
         "caToken": "0x5aDb71adb317CE975A405e90335068F0aF9F26C7",
-        "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
         "canDeposit": true,
         "canRedeem": true
       }

@@ -55,7 +55,6 @@ contract Deploy is Script {
     }
 
     struct EulerEVaultCfg {
-        address asset;
         bool canDeposit;
         bool canRedeem;
         address eVault;
@@ -67,13 +66,13 @@ contract Deploy is Script {
         bool canDeposit;
         bool canRedeem;
         address childStrategy;
+        address eligibility;
         address factory;
         bytes32 salt;
         address vault;
     }
 
     struct CapyFiCfg {
-        address asset;
         address caToken;
         bool canDeposit;
         bool canRedeem;
@@ -271,7 +270,7 @@ contract Deploy is Script {
             salts[k] = eev[i].salt;
             inits[k] = abi.encodePacked(
                 type(EulerEVaultAdapter).creationCode,
-                abi.encode(eev[i].factory, eev[i].eVault, eev[i].asset, executor)
+                abi.encode(eev[i].factory, eev[i].eVault, executor)
             );
             canDeposit[k] = eev[i].canDeposit;
             canRedeem[k] = eev[i].canRedeem;
@@ -282,7 +281,9 @@ contract Deploy is Script {
             salts[k] = earn[i].salt;
             inits[k] = abi.encodePacked(
                 type(EulerEarnAdapter).creationCode,
-                abi.encode(earn[i].factory, earn[i].vault, earn[i].childStrategy, executor)
+                abi.encode(
+                    earn[i].factory, earn[i].vault, earn[i].childStrategy, earn[i].eligibility, executor
+                )
             );
             canDeposit[k] = earn[i].canDeposit;
             canRedeem[k] = earn[i].canRedeem;
@@ -293,7 +294,7 @@ contract Deploy is Script {
             salts[k] = capy[i].salt;
             inits[k] = abi.encodePacked(
                 type(CapyFiAdapter).creationCode,
-                abi.encode(executor, capy[i].comptroller, capy[i].caToken, capy[i].asset)
+                abi.encode(executor, capy[i].comptroller, capy[i].caToken)
             );
             canDeposit[k] = capy[i].canDeposit;
             canRedeem[k] = capy[i].canRedeem;
