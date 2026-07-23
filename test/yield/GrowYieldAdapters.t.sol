@@ -14,7 +14,6 @@ import {AaveV3Adapter} from "../../src/adapters/AaveV3Adapter.sol";
 import {MorphoVaultV2Adapter} from "../../src/adapters/MorphoVaultV2Adapter.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
-import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
 import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {IYieldAdapter} from "../../src/interfaces/IYieldAdapter.sol";
 import {MockUnderlying, MockVault} from "../invariant/MockYieldVenues.sol";
@@ -37,7 +36,6 @@ contract GrowYieldAdaptersTest is GrowYieldTestBase {
             IVaultV2(wrapper),
             IVaultV2Factory(address(morphoFactory)),
             IMorphoVaultV1AdapterFactory(address(morphoAdapterFactory)),
-            IMorphoVaultEligibility(address(morphoEligibility)),
             address(executor)
         );
     }
@@ -54,7 +52,7 @@ contract GrowYieldAdaptersTest is GrowYieldTestBase {
     function test_validWrapper_constructs() public {
         MorphoVaultV2Adapter adapter = _newMorphoAdapter(address(_freshWrapper()));
         assertEq(adapter.asset(), address(underlying));
-        assertEq(adapter.child(), address(morphoChild));
+        assertEq(adapter.routingTarget(), address(morphoChild));
     }
 
     function test_rejectsWrapperNotFromFactory() public {
@@ -125,16 +123,16 @@ contract GrowYieldAdaptersTest is GrowYieldTestBase {
         _newMorphoAdapter(address(wrapper));
     }
 
-    function test_rejectsIneligibleChild() public {
+    function test_rejectsRoutingTargetNotFromFactory() public {
         MockVaultV2 wrapper = _freshWrapper();
-        morphoEligibility.set(address(morphoChild), false);
+        morphoFactory.set(address(morphoChild), false);
         vm.expectRevert(MorphoVaultV2Adapter.Invalid.selector);
         _newMorphoAdapter(address(wrapper));
     }
 
     function test_rejectsChildAssetMismatch() public {
         MockVault wrongAssetChild = new MockVault(IERC20(address(otherUnderlying)), "C2", "C2");
-        morphoEligibility.set(address(wrongAssetChild), true);
+        morphoFactory.set(address(wrongAssetChild), true);
 
         MockVaultV2 wrapper = new MockVaultV2(IERC20(address(underlying)), "W2", "W2");
         morphoFactory.set(address(wrapper), true);
@@ -160,7 +158,6 @@ contract GrowYieldAdaptersTest is GrowYieldTestBase {
             IVaultV2(address(0)),
             IVaultV2Factory(address(morphoFactory)),
             IMorphoVaultV1AdapterFactory(address(morphoAdapterFactory)),
-            IMorphoVaultEligibility(address(morphoEligibility)),
             address(executor)
         );
     }

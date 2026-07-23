@@ -22,7 +22,6 @@ import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
 import {AaveV3Adapter} from "../../src/adapters/AaveV3Adapter.sol";
 import {MorphoVaultV2Adapter} from "../../src/adapters/MorphoVaultV2Adapter.sol";
 import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
-import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
 import {
@@ -34,7 +33,6 @@ import {
 } from "../../src/interfaces/IGrowYieldExecutor.sol";
 import {MockUnderlying, MockVault, MockAavePool} from "../invariant/MockYieldVenues.sol";
 import {
-    MockEligibility,
     MockMorphoV1AdapterFactory,
     MockMutableAaveDataProvider,
     MockValidationModule,
@@ -71,7 +69,6 @@ abstract contract GrowYieldTestBase is Test {
     AaveV3Adapter internal aaveAdapterOther;
 
     MockVaultV2Factory internal morphoFactory;
-    MockEligibility internal morphoEligibility;
     MockMorphoV1AdapterFactory internal morphoAdapterFactory;
     MockVault internal morphoChild;
     MockVaultV2 internal morphoWrapper;
@@ -158,11 +155,10 @@ abstract contract GrowYieldTestBase is Test {
 
     function _deployMorphoStack() internal {
         morphoFactory = new MockVaultV2Factory();
-        morphoEligibility = new MockEligibility();
         morphoAdapterFactory = new MockMorphoV1AdapterFactory();
 
         morphoChild = new MockVault(IERC20(address(underlying)), "Child", "cV");
-        morphoEligibility.set(address(morphoChild), true);
+        morphoFactory.set(address(morphoChild), true);
 
         morphoWrapper = new MockVaultV2(IERC20(address(underlying)), "Wrapper", "wV");
         morphoFactory.set(address(morphoWrapper), true);
@@ -176,7 +172,6 @@ abstract contract GrowYieldTestBase is Test {
             IVaultV2(address(morphoWrapper)),
             IVaultV2Factory(address(morphoFactory)),
             IMorphoVaultV1AdapterFactory(address(morphoAdapterFactory)),
-            IMorphoVaultEligibility(address(morphoEligibility)),
             address(executor)
         );
     }

@@ -12,15 +12,15 @@ import {
     IMorphoVaultV1AdapterFactory
 } from "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
 
-import {IMorphoVaultEligibility} from "../interfaces/IMorphoVaultEligibility.sol";
 import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
 /// @title MorphoVaultV2Adapter
 /// @notice Morpho VaultV2 venue adapter for one wrapper vault.
 /// @dev The wrapper must have one factory-authenticated Morpho VaultV1 adapter, a
-///      matching asset, and an immutable adapter set. Deposits re-check child
-///      eligibility, liquidity routing, and the caller's current round-trip gates.
-///      Later gate changes, liquidity, or venue governance can still impair exits.
+///      factory-authenticated routing target, matching assets, and an immutable adapter
+///      set. Deposits re-check routing-target factory registration, liquidity routing,
+///      and the caller's current round-trip gates. Later gate changes, liquidity, or
+///      venue governance can still impair exits.
 /// @custom:security-contact security@getgrowapp.co
 contract MorphoVaultV2Adapter is IYieldAdapter {
     using SafeERC20 for IERC20;
@@ -28,14 +28,14 @@ contract MorphoVaultV2Adapter is IYieldAdapter {
     /// @notice The VaultV2 wrapper this adapter deposits into (also the position token).
     IVaultV2 public immutable wrapper;
 
-    /// @notice The Morpho VaultV1 child the wrapper's liquidity adapter routes into.
-    address public immutable child;
+    /// @notice Yield venue the wrapper's liquidity adapter routes into.
+    address public immutable routingTarget;
 
     /// @notice The wrapper's single designated liquidity adapter, fixed at validation.
     address public immutable liquidityAdapter;
 
-    /// @notice External eligibility oracle re-checked on every deposit (drift check).
-    IMorphoVaultEligibility public immutable eligibility;
+    /// @notice Canonical VaultV2 factory used to authenticate wrapper and routing target.
+    IVaultV2Factory public immutable factory;
 
     /// @notice Sole authorized caller of `deposit` / `redeem`.
     address public immutable executor;
@@ -56,21 +56,18 @@ contract MorphoVaultV2Adapter is IYieldAdapter {
     }
 
     /// @param wrapper_ VaultV2 wrapper used as the position token.
-    /// @param factory_ Canonical VaultV2 factory authenticating the wrapper.
+    /// @param factory_ Canonical VaultV2 factory authenticating wrapper and routing target.
     /// @param adapterFactory_ Factory authenticating the wrapper's VaultV1 liquidity adapter.
-    /// @param eligibility_ Eligibility oracle for the Morpho VaultV1 child.
     /// @param executor_ GrowYield executor authorized to call this adapter.
     constructor(
         IVaultV2 wrapper_,
         IVaultV2Factory factory_,
         IMorphoVaultV1AdapterFactory adapterFactory_,
-        IMorphoVaultEligibility eligibility_,
         address executor_
     ) {
         if (
             address(wrapper_).code.length == 0 || address(factory_).code.length == 0
-                || address(adapterFactory_).code.length == 0
-                || address(eligibility_).code.length == 0 || executor_.code.length == 0
+                || address(adapterFactory_).code.length == 0 || executor_.code.length == 0
         ) revert Invalid();
 
         if (!factory_.isVaultV2(address(wrapper_))) revert Invalid();
@@ -90,22 +87,22 @@ contract MorphoVaultV2Adapter is IYieldAdapter {
                 || morphoAdapter.parentVault() != address(wrapper_)
         ) revert Invalid();
 
-        address child_ = morphoAdapter.morphoVaultV1();
-        if (child_.code.length == 0 || !eligibility_.isEligibleVault(child_)) {
+        address routingTarget_ = morphoAdapter.morphoVaultV1();
+        if (routingTarget_.code.length == 0 || !factory_.isVaultV2(routingTarget_)) {
             revert Invalid();
         }
 
         address asset_ = IERC4626(address(wrapper_)).asset();
         if (
-            asset_.code.length == 0 || asset_ != IERC4626(child_).asset()
+            asset_.code.length == 0 || asset_ != IERC4626(routingTarget_).asset()
                 || !wrapper_.abdicated(IVaultV2.addAdapter.selector)
                 || !wrapper_.abdicated(IVaultV2.removeAdapter.selector)
         ) revert Invalid();
 
         wrapper = wrapper_;
-        child = child_;
+        routingTarget = routingTarget_;
         liquidityAdapter = liquidityAdapter_;
-        eligibility = eligibility_;
+        factory = factory_;
         executor = executor_;
         asset = asset_;
     }
@@ -167,10 +164,10 @@ contract MorphoVaultV2Adapter is IYieldAdapter {
         return assetsOut;
     }
 
-    /// @dev Re-checks mutable eligibility and liquidity routing before deposits.
+    /// @dev Re-checks routing-target factory registration and liquidity routing before deposits.
     function _checkDeposit(address receiver) private view {
         if (
-            !eligibility.isEligibleVault(child) || wrapper.liquidityAdapter() != liquidityAdapter
+            !factory.isVaultV2(routingTarget) || wrapper.liquidityAdapter() != liquidityAdapter
                 || wrapper.liquidityData().length != 0
         ) revert VenueDrift();
         if (

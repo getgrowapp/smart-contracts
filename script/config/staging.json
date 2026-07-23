@@ -35,7 +35,6 @@
         "wrapper": "0xbbbb000000000000000000000000000000000001",
         "factory": "0xbbbb000000000000000000000000000000000002",
         "v1AdapterFactory": "0xbbbb000000000000000000000000000000000003",
-        "eligibility": "0xbbbb000000000000000000000000000000000004",
         "canDeposit": true,
         "canRedeem": true
       }
@@ -55,7 +54,6 @@
         "factory": "0xdddd000000000000000000000000000000000001",
         "vault": "0xdddd000000000000000000000000000000000002",
         "childStrategy": "0xdddd000000000000000000000000000000000004",
-        "eligibility": "0xdddd000000000000000000000000000000000005",
         "canDeposit": true,
         "canRedeem": true
       }

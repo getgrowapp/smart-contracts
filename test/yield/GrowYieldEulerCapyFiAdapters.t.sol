@@ -14,7 +14,6 @@ import {EulerEVaultAdapter} from "../../src/adapters/EulerEVaultAdapter.sol";
 import {ICapyFiCaToken} from "../../src/interfaces/ICapyFiCaToken.sol";
 import {ICapyFiComptroller} from "../../src/interfaces/ICapyFiComptroller.sol";
 import {IEulerEarnFactory} from "../../src/interfaces/IEulerEarnFactory.sol";
-import {IEulerStrategyEligibility} from "../../src/interfaces/IEulerStrategyEligibility.sol";
 import {IEulerEVaultFactory} from "../../src/interfaces/IEulerEVaultFactory.sol";
 import {
     AmountMode,
@@ -31,7 +30,6 @@ import {
     MockEulerEarnFactory,
     MockEulerEarnVault,
     MockEulerEVaultFactory,
-    MockEulerStrategyEligibility,
     MockEulerVault
 } from "./mocks/MockEulerCapyFiStack.sol";
 
@@ -49,7 +47,6 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
 
     MockEulerEVaultFactory internal evkFactory;
     MockEulerEarnFactory internal earnFactory;
-    MockEulerStrategyEligibility internal earnEligibility;
     MockEulerVault internal evault;
     MockEulerVault internal earnChild;
     MockEulerEarnVault internal earnVault;
@@ -71,15 +68,15 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
 
         evkFactory = new MockEulerEVaultFactory();
         earnFactory = new MockEulerEarnFactory();
-        earnEligibility = new MockEulerStrategyEligibility();
         evault = new MockEulerVault(IERC20(address(underlying)), "eUSD", "eUSD");
         earnChild = new MockEulerVault(IERC20(address(underlying)), "child", "child");
-        earnEligibility.set(address(earnChild), true);
         earnVault = new MockEulerEarnVault(
             IERC20(address(underlying)), IERC4626(address(earnChild)), "eeUSD", "eeUSD"
         );
         evkFactory.setProxy(address(evault), true);
         earnFactory.setVault(address(earnVault), true);
+        earnFactory.setVault(address(earnChild), true);
+        earnFactory.setStrategyAllowed(address(earnChild), true);
 
         evaultAdapter = new EulerEVaultAdapter(
             IEulerEVaultFactory(address(evkFactory)), IERC4626(address(evault)), address(executor)
@@ -88,7 +85,6 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
             IEulerEarnFactory(address(earnFactory)),
             IERC4626(address(earnVault)),
             IERC4626(address(earnChild)),
-            IEulerStrategyEligibility(address(earnEligibility)),
             address(executor)
         );
 
@@ -200,7 +196,6 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
             IEulerEarnFactory(address(earnFactory)),
             IERC4626(address(rogue)),
             IERC4626(address(earnChild)),
-            IEulerStrategyEligibility(address(earnEligibility)),
             address(executor)
         );
     }
@@ -211,64 +206,80 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
         );
         unlocked.setUnlocked();
         earnFactory.setVault(address(unlocked), true);
+        earnFactory.setStrategyAllowed(address(earnChild), true);
         vm.expectRevert(EulerEarnAdapter.VaultNotLocked.selector);
         new EulerEarnAdapter(
             IEulerEarnFactory(address(earnFactory)),
             IERC4626(address(unlocked)),
             IERC4626(address(earnChild)),
-            IEulerStrategyEligibility(address(earnEligibility)),
             address(executor)
         );
     }
 
-    function test_earn_rejectsIneligibleChild() public {
+    function test_earn_rejectsRoutingTargetNotFromFactory() public {
         MockEulerVault rogueChild =
             new MockEulerVault(IERC20(address(underlying)), "rogue", "rogue");
         MockEulerEarnVault vault = new MockEulerEarnVault(
             IERC20(address(underlying)), IERC4626(address(rogueChild)), "w", "w"
         );
         earnFactory.setVault(address(vault), true);
-        vm.expectRevert(EulerEarnAdapter.ChildNotEligible.selector);
+        vm.expectRevert(AbstractEulerAdapter.NonCanonical.selector);
         new EulerEarnAdapter(
             IEulerEarnFactory(address(earnFactory)),
             IERC4626(address(vault)),
             IERC4626(address(rogueChild)),
-            IEulerStrategyEligibility(address(earnEligibility)),
             address(executor)
         );
     }
 
-    function test_earn_rejectsChildStrategyMismatch() public {
+    function test_earn_rejectsRoutingTargetNotAllowedByFactory() public {
+        MockEulerVault rogueChild =
+            new MockEulerVault(IERC20(address(underlying)), "rogue", "rogue");
+        MockEulerEarnVault vault = new MockEulerEarnVault(
+            IERC20(address(underlying)), IERC4626(address(rogueChild)), "w", "w"
+        );
+        earnFactory.setVault(address(vault), true);
+        earnFactory.setVault(address(rogueChild), true);
+        vm.expectRevert(EulerEarnAdapter.RoutingTargetNotAllowed.selector);
+        new EulerEarnAdapter(
+            IEulerEarnFactory(address(earnFactory)),
+            IERC4626(address(vault)),
+            IERC4626(address(rogueChild)),
+            address(executor)
+        );
+    }
+
+    function test_earn_rejectsRoutingTargetMismatch() public {
         MockEulerVault otherChild =
             new MockEulerVault(IERC20(address(underlying)), "other", "other");
         MockEulerEarnVault vault = new MockEulerEarnVault(
             IERC20(address(underlying)), IERC4626(address(earnChild)), "m", "m"
         );
         earnFactory.setVault(address(vault), true);
+        earnFactory.setStrategyAllowed(address(earnChild), true);
         vault.setSupplyQueueHead(IERC4626(address(otherChild)));
         vault.setWithdrawQueueHead(IERC4626(address(otherChild)));
-        vm.expectRevert(EulerEarnAdapter.ChildStrategyMismatch.selector);
+        vm.expectRevert(EulerEarnAdapter.RoutingTargetMismatch.selector);
         new EulerEarnAdapter(
             IEulerEarnFactory(address(earnFactory)),
             IERC4626(address(vault)),
             IERC4626(address(earnChild)),
-            IEulerStrategyEligibility(address(earnEligibility)),
             address(executor)
         );
     }
 
-    function test_earn_rejectsDisabledChild() public {
+    function test_earn_rejectsDisabledRoutingTarget() public {
         MockEulerEarnVault vault = new MockEulerEarnVault(
             IERC20(address(underlying)), IERC4626(address(earnChild)), "d", "d"
         );
         earnFactory.setVault(address(vault), true);
+        earnFactory.setStrategyAllowed(address(earnChild), true);
         vault.setChildEnabled(false);
-        vm.expectRevert(EulerEarnAdapter.ChildNotEnabled.selector);
+        vm.expectRevert(EulerEarnAdapter.RoutingTargetNotEnabled.selector);
         new EulerEarnAdapter(
             IEulerEarnFactory(address(earnFactory)),
             IERC4626(address(vault)),
             IERC4626(address(earnChild)),
-            IEulerStrategyEligibility(address(earnEligibility)),
             address(executor)
         );
     }
@@ -615,17 +626,16 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
             IEulerEarnFactory(address(otherFactory)),
             IERC4626(address(earnVault)),
             IERC4626(address(earnChild)),
-            IEulerStrategyEligibility(address(earnEligibility)),
             address(executor)
         );
     }
 
-    function test_earn_depositRevertsWhenChildDelisted() public {
+    function test_earn_depositRevertsWhenRoutingTargetDelistedFromFactory() public {
         underlying.mint(account, 100e6);
         _approveMax(address(underlying));
         Operation[] memory ops = _ops1(_op(earnAdapter, OperationKind.DEPOSIT, 100e6));
-        earnEligibility.set(address(earnChild), false);
-        vm.expectRevert(EulerEarnAdapter.ChildNotEligible.selector);
+        earnFactory.setVault(address(earnChild), false);
+        vm.expectRevert(AbstractEulerAdapter.NonCanonical.selector);
         _execute(ops);
     }
 

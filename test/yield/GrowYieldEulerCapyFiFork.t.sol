@@ -14,21 +14,8 @@ import {ICapyFiCaToken} from "../../src/interfaces/ICapyFiCaToken.sol";
 import {ICapyFiComptroller} from "../../src/interfaces/ICapyFiComptroller.sol";
 import {IEulerEarnFactory} from "../../src/interfaces/IEulerEarnFactory.sol";
 import {IEulerEVaultFactory} from "../../src/interfaces/IEulerEVaultFactory.sol";
-import {IEulerStrategyEligibility} from "../../src/interfaces/IEulerStrategyEligibility.sol";
 import {AmountMode, Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
 import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
-
-contract ForkEulerStrategyEligibility is IEulerStrategyEligibility {
-    address internal immutable allowed;
-
-    constructor(address allowed_) {
-        allowed = allowed_;
-    }
-
-    function isEligibleStrategy(address strategy) external view returns (bool) {
-        return strategy == allowed;
-    }
-}
 
 /// @notice Optional Base mainnet fork coverage for Euler EVK, Euler Earn, and CapyFi.
 /// @dev Requires `BASE_RPC_URL`. Skips if unset.
@@ -127,13 +114,10 @@ contract GrowYieldEulerCapyFiForkTest is Test {
 
     function test_fork_earn_depositAndRedeem_realUsdc() public {
         _freshExecutor();
-        ForkEulerStrategyEligibility eligibility =
-            new ForkEulerStrategyEligibility(EARN_CHILD_USDC);
         EulerEarnAdapter adapter = new EulerEarnAdapter(
             IEulerEarnFactory(EARN_FACTORY),
             IERC4626(EARN_GBY_USDC),
             IERC4626(EARN_CHILD_USDC),
-            IEulerStrategyEligibility(address(eligibility)),
             address(executor)
         );
         _enable(address(adapter));

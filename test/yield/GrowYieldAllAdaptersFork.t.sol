@@ -24,8 +24,6 @@ import {ICapyFiCaToken} from "../../src/interfaces/ICapyFiCaToken.sol";
 import {ICapyFiComptroller} from "../../src/interfaces/ICapyFiComptroller.sol";
 import {IEulerEarnFactory} from "../../src/interfaces/IEulerEarnFactory.sol";
 import {IEulerEVaultFactory} from "../../src/interfaces/IEulerEVaultFactory.sol";
-import {IEulerStrategyEligibility} from "../../src/interfaces/IEulerStrategyEligibility.sol";
-import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
 import {AmountMode, Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
 import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {IYieldAdapter} from "../../src/interfaces/IYieldAdapter.sol";
@@ -33,32 +31,6 @@ import {IYieldAdapter} from "../../src/interfaces/IYieldAdapter.sol";
 interface IPoolAddressesProviderAllAdaptersFork {
     function getPool() external view returns (address);
     function getPoolDataProvider() external view returns (address);
-}
-
-/// @dev Test-local policy oracle. Protocol provenance remains enforced by the live
-///      Morpho factories; this contract admits exactly the live child used by the fixture.
-contract ForkMorphoEligibility is IMorphoVaultEligibility {
-    address internal immutable allowed;
-
-    constructor(address allowed_) {
-        allowed = allowed_;
-    }
-
-    function isEligibleVault(address vault) external view returns (bool) {
-        return vault == allowed;
-    }
-}
-
-contract ForkEulerStrategyEligibility is IEulerStrategyEligibility {
-    address internal immutable allowed;
-
-    constructor(address allowed_) {
-        allowed = allowed_;
-    }
-
-    function isEligibleStrategy(address strategy) external view returns (bool) {
-        return strategy == allowed;
-    }
 }
 
 /// @notice Base fork cycle through every production adapter implementation.
@@ -118,13 +90,10 @@ contract GrowYieldAllAdaptersForkTest is Test {
 
         IVaultV2 wrapper = IVaultV2(MORPHO_USDC_WRAPPER);
         address liquidityAdapter = wrapper.liquidityAdapter();
-        address child = IMorphoVaultV1Adapter(liquidityAdapter).morphoVaultV1();
-        ForkMorphoEligibility eligibility = new ForkMorphoEligibility(child);
         morpho = new MorphoVaultV2Adapter(
             wrapper,
             IVaultV2Factory(MORPHO_VAULT_V2_FACTORY),
             IMorphoVaultV1AdapterFactory(MORPHO_V1_ADAPTER_FACTORY),
-            eligibility,
             address(executor)
         );
 
@@ -133,13 +102,10 @@ contract GrowYieldAllAdaptersForkTest is Test {
             IERC4626(EULER_EVAULT_USDC),
             address(executor)
         );
-        ForkEulerStrategyEligibility eulerEligibility =
-            new ForkEulerStrategyEligibility(EULER_EARN_CHILD_USDC);
         earn = new EulerEarnAdapter(
             IEulerEarnFactory(EULER_EARN_FACTORY),
             IERC4626(EULER_EARN_GBY_USDC),
             IERC4626(EULER_EARN_CHILD_USDC),
-            IEulerStrategyEligibility(address(eulerEligibility)),
             address(executor)
         );
         capy = new CapyFiAdapter(
@@ -191,13 +157,13 @@ contract GrowYieldAllAdaptersForkTest is Test {
                 .isMorphoVaultV1Adapter(liquidityAdapter)
         );
         assertEq(IMorphoVaultV1Adapter(liquidityAdapter).parentVault(), address(wrapper));
-        assertEq(IERC4626(morpho.child()).asset(), USDC);
+        assertEq(IERC4626(morpho.routingTarget()).asset(), USDC);
 
         assertTrue(IEulerEVaultFactory(EULER_EVAULT_FACTORY).isProxy(EULER_EVAULT_USDC));
         assertTrue(IEulerEarnFactory(EULER_EARN_FACTORY).isVault(EULER_EARN_GBY_USDC));
         assertEq(IERC4626(EULER_EVAULT_USDC).asset(), USDC);
         assertEq(IERC4626(EULER_EARN_GBY_USDC).asset(), USDC);
-        assertEq(address(earn.childStrategy()), EULER_EARN_CHILD_USDC);
+        assertEq(address(earn.routingTarget()), EULER_EARN_CHILD_USDC);
 
         assertEq(ICapyFiCaToken(CAPY_USDC).comptroller(), CAPY_COMPTROLLER);
         assertEq(ICapyFiCaToken(CAPY_USDC).underlying(), USDC);

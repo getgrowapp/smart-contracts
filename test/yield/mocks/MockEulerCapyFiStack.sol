@@ -13,17 +13,7 @@ import {ICapyFiComptroller} from "../../../src/interfaces/ICapyFiComptroller.sol
 import {IEulerEarn} from "../../../src/interfaces/IEulerEarn.sol";
 import {IEulerEarnFactory} from "../../../src/interfaces/IEulerEarnFactory.sol";
 import {IEulerEVaultFactory} from "../../../src/interfaces/IEulerEVaultFactory.sol";
-import {IEulerStrategyEligibility} from "../../../src/interfaces/IEulerStrategyEligibility.sol";
 import {MockUnderlying} from "../../invariant/MockYieldVenues.sol";
-
-/// @dev Settable Euler strategy eligibility oracle.
-contract MockEulerStrategyEligibility is IEulerStrategyEligibility {
-    mapping(address => bool) public isEligibleStrategy;
-
-    function set(address strategy, bool eligible) external {
-        isEligibleStrategy[strategy] = eligible;
-    }
-}
 
 /// @dev Settable EVK GenericFactory authenticity oracle.
 contract MockEulerEVaultFactory is IEulerEVaultFactory {
@@ -37,9 +27,14 @@ contract MockEulerEVaultFactory is IEulerEVaultFactory {
 /// @dev Settable EulerEarnFactory authenticity oracle.
 contract MockEulerEarnFactory is IEulerEarnFactory {
     mapping(address => bool) public isVault;
+    mapping(address => bool) public isStrategyAllowed;
 
     function setVault(address vault, bool enabled) external {
         isVault[vault] = enabled;
+    }
+
+    function setStrategyAllowed(address strategy, bool allowed) external {
+        isStrategyAllowed[strategy] = allowed;
     }
 }
 

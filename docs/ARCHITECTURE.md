@@ -242,7 +242,7 @@ The Morpho adapter accepts only a factory-authenticated VaultV2 wrapper with one
 factory-authenticated Morpho VaultV1 child adapter, matching assets, fixed liquidity
 routing, empty liquidity data, and abdicated adapter-add/remove selectors.
 
-Deposits re-check child eligibility, liquidity routing, and all required round-trip
+Deposits re-check routing-target factory registration, liquidity routing, and all required round-trip
 gates. Deposit and redeem verify ERC-4626 receiver deltas and exact source
 consumption. Later governance, gates, liquidity, or losses can still impair exits.
 
@@ -256,7 +256,7 @@ protocol-specific subclasses perform only the venue proof:
 | Adapter | Pinned contracts | Authenticity proof | Why it proves a valid **protocol** deployment |
 |---|---|---|---|
 | `EulerEVaultAdapter` | EVK `GenericFactory`, EVault, executor | `factory.isProxy(vault)` and `vault.asset()` drift check | Underlying is read from `vault.asset()` at construction. **Not** a Grow risk approval. |
-| `EulerEarnAdapter` | EulerEarnFactory, locked Earn vault, pinned child strategy, eligibility oracle, executor | `factory.isVault(vault)`, renounced owner/curator, single supply/withdraw queue entry equal to `childStrategy`, `eligibility.isEligibleStrategy(childStrategy)`, child enabled in market config | Locked wrapper + allowlisted yield path. Eligibility is re-checked on every op so a delisted child blocks new deposits. **Not** a substitute for registry inclusion. |
+| `EulerEarnAdapter` | EulerEarnFactory, locked Earn vault, pinned routing target, executor | `factory.isVault(vault)`, optional `factory.isVault(routingTarget)` when wrapped, renounced owner/curator, single supply/withdraw queue entry equal to `routingTarget`, routing target enabled in market config | Wrapped mode locks routing to one factory-registered strategy. **Not** a substitute for registry inclusion. |
 
 Both adapters re-run those checks before every deposit and redeem. Deposits use
 `forceApprove`, credit shares **directly** to the smart account via ERC-4626

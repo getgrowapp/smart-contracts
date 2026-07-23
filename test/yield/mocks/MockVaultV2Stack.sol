@@ -6,7 +6,6 @@ import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.so
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {IAaveProtocolDataProvider} from "../../../src/interfaces/IAaveProtocolDataProvider.sol";
-import {IMorphoVaultEligibility} from "../../../src/interfaces/IMorphoVaultEligibility.sol";
 
 /// @dev Minimal VaultV2Factory stand-in with a settable registry.
 contract MockVaultV2Factory {
@@ -14,15 +13,6 @@ contract MockVaultV2Factory {
 
     function set(address vault, bool enabled) external {
         isVaultV2[vault] = enabled;
-    }
-}
-
-/// @dev Settable eligibility oracle.
-contract MockEligibility is IMorphoVaultEligibility {
-    mapping(address => bool) public isEligibleVault;
-
-    function set(address vault, bool eligible) external {
-        isEligibleVault[vault] = eligible;
     }
 }
 

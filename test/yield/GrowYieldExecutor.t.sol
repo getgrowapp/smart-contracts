@@ -577,12 +577,12 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
 
     // --- drift protection ---
 
-    function test_morphoDrift_ineligibleChild_blocksDepositAllowsExit() public {
+    function test_morphoDrift_routingTargetDelistedFromFactory_blocksDepositAllowsExit() public {
         underlying.mint(account, 200e6);
         _approveMax(address(underlying));
         _execute(_ops1(_op(morphoAdapter, OperationKind.DEPOSIT, 100e6)));
 
-        morphoEligibility.set(address(morphoChild), false);
+        morphoFactory.set(address(morphoChild), false);
         Operation[] memory depositOps = _ops1(_op(morphoAdapter, OperationKind.DEPOSIT, 100e6));
 
         vm.expectRevert(MorphoVaultV2Adapter.VenueDrift.selector);

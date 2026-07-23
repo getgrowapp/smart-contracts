@@ -35,7 +35,6 @@
         "wrapper": "0xa157a87D41ef25d033082180858DB0813ad61d39",
         "factory": "0x4501125508079A99ebBebCE205DeC9593C2b5857",
         "v1AdapterFactory": "0xF42D9c36b34c9c2CF3Bc30eD2a52a90eEB604642",
-        "eligibility": "0x006A9c616E87F10635896D3B16D1E6922B5Ace16",
         "canDeposit": true,
         "canRedeem": true
       }
@@ -55,7 +54,6 @@
         "factory": "0x75F49a2621b6DeC6a5baB22ce961bF3e676EFAE6",
         "vault": "0x1c66B3A163e1998D9235E24e782d3d54aDEa094E",
         "childStrategy": "0x8bF41Ad2b816F7c220b22F4BCD63fC2A35Ab4247",
-        "eligibility": "0x0000000000000000000000000000000000000000",
         "canDeposit": true,
         "canRedeem": true
       }

@@ -47,7 +47,6 @@ contract Deploy is Script {
     struct MorphoCfg {
         bool canDeposit;
         bool canRedeem;
-        address eligibility;
         address factory;
         bytes32 salt;
         address v1AdapterFactory;
@@ -66,7 +65,6 @@ contract Deploy is Script {
         bool canDeposit;
         bool canRedeem;
         address childStrategy;
-        address eligibility;
         address factory;
         bytes32 salt;
         address vault;
@@ -253,13 +251,7 @@ contract Deploy is Script {
             salts[k] = morpho[i].salt;
             inits[k] = abi.encodePacked(
                 type(MorphoVaultV2Adapter).creationCode,
-                abi.encode(
-                    morpho[i].wrapper,
-                    morpho[i].factory,
-                    morpho[i].v1AdapterFactory,
-                    morpho[i].eligibility,
-                    executor
-                )
+                abi.encode(morpho[i].wrapper, morpho[i].factory, morpho[i].v1AdapterFactory, executor)
             );
             canDeposit[k] = morpho[i].canDeposit;
             canRedeem[k] = morpho[i].canRedeem;
@@ -281,9 +273,7 @@ contract Deploy is Script {
             salts[k] = earn[i].salt;
             inits[k] = abi.encodePacked(
                 type(EulerEarnAdapter).creationCode,
-                abi.encode(
-                    earn[i].factory, earn[i].vault, earn[i].childStrategy, earn[i].eligibility, executor
-                )
+                abi.encode(earn[i].factory, earn[i].vault, earn[i].childStrategy, executor)
             );
             canDeposit[k] = earn[i].canDeposit;
             canRedeem[k] = earn[i].canRedeem;

@@ -192,7 +192,6 @@ contract DeployTest is Test {
     function test_eulerEarnCfgDecodesInKeyOrder() public pure {
         string memory json = "{" '"canDeposit":true,' '"canRedeem":true,'
             '"childStrategy":"0x00000000000000000000000000000000000000C5",'
-            '"eligibility":"0x0000000000000000000000000000000000000EA3",'
             '"factory":"0x0000000000000000000000000000000000000EA1",'
             '"salt":"0x0000000000000000000000000000000000000000000000000000000000000013",'
             '"vault":"0x0000000000000000000000000000000000000EA2"' "}";
@@ -200,7 +199,6 @@ contract DeployTest is Test {
         assertTrue(c.canDeposit, "canDeposit");
         assertTrue(c.canRedeem, "canRedeem");
         assertEq(c.childStrategy, address(0xC5), "childStrategy");
-        assertEq(c.eligibility, address(0xEA3), "eligibility");
         assertEq(c.factory, address(0xEA1), "factory");
         assertEq(c.salt, bytes32(uint256(0x13)), "salt");
         assertEq(c.vault, address(0xEA2), "vault");

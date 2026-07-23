@@ -59,16 +59,16 @@ verify 0x47f181316C96ee9045c7f5eFfACa47C23658478a src/adapters/AaveV3Adapter.sol
     0xA238Dd80C259a72e81d7e4664a9801593F98d1c5 0x0F43731EB8d45A581f4a36DD74F5f358bc90C73A 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 "$EXECUTOR")"
 
 verify 0xC100691d7a8421477bE09CCC0F4d185144E2d085 src/adapters/MorphoVaultV2Adapter.sol:MorphoVaultV2Adapter \
-  --constructor-args "$(cast abi-encode "constructor(address,address,address,address,address)" \
-    0xa157a87D41ef25d033082180858DB0813ad61d39 0x4501125508079A99ebBebCE205DeC9593C2b5857 0xF42D9c36b34c9c2CF3Bc30eD2a52a90eEB604642 0x006A9c616E87F10635896D3B16D1E6922B5Ace16 "$EXECUTOR")"
+  --constructor-args "$(cast abi-encode "constructor(address,address,bytes32,address,bytes32,address)" \
+    0xa157a87D41ef25d033082180858DB0813ad61d39 0x4501125508079A99ebBebCE205DeC9593C2b5857 0xba55eb73d42937607d7e3c77f68353c2517c4fad4df02f0c9bbd2e4248475503 0xF42D9c36b34c9c2CF3Bc30eD2a52a90eEB604642 0x4e1024d5bfd17914a3ca6ad49905eabdfd60122ccd5a577406e7a4a765bd49ad "$EXECUTOR")"
 
 verify 0x21490160229E4d9586cfF8D9537b6fCbB4FF4Af0 src/adapters/EulerEVaultAdapter.sol:EulerEVaultAdapter \
-  --constructor-args "$(cast abi-encode "constructor(address,address,address)" \
-    0x7F321498A801A191a93C840750ed637149dDf8D0 0x0A1a3b5f2041F33522C4efc754a7D096f880eE16 "$EXECUTOR")"
+  --constructor-args "$(cast abi-encode "constructor(address,bytes32,address,address)" \
+    0x7F321498A801A191a93C840750ed637149dDf8D0 0xb704ec88e9e85d56e174489031f21abaf401df5d156b374bd6ce6a76e4ba3277 0x0A1a3b5f2041F33522C4efc754a7D096f880eE16 "$EXECUTOR")"
 
 verify 0xbBa5E40133Df5Bdf89C01c5794ec24bDc5B96Cc8 src/adapters/EulerEarnAdapter.sol:EulerEarnAdapter \
-  --constructor-args "$(cast abi-encode "constructor(address,address,address,address,address)" \
-    0x75F49a2621b6DeC6a5baB22ce961bF3e676EFAE6 0x1c66B3A163e1998D9235E24e782d3d54aDEa094E 0x8bF41Ad2b816F7c220b22F4BCD63fC2A35Ab4247 0x0000000000000000000000000000000000000000 "$EXECUTOR")"
+  --constructor-args "$(cast abi-encode "constructor(address,bytes32,address,address,address)" \
+    0x75F49a2621b6DeC6a5baB22ce961bF3e676EFAE6 0x281a6a44615cf7c17025a920581646d3704531488b080e6be23207ebffa38844 0x1c66B3A163e1998D9235E24e782d3d54aDEa094E 0x8bF41Ad2b816F7c220b22F4BCD63fC2A35Ab4247 "$EXECUTOR")"
 
 verify 0x9A918b6B3BF86Da156B1CD1571e4cab4CDbdbc1b src/adapters/CapyFiAdapter.sol:CapyFiAdapter \
   --constructor-args "$(cast abi-encode "constructor(address,address,address)" \
