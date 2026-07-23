@@ -64,9 +64,9 @@ contract Deploy is Script {
     }
 
     struct EulerEarnCfg {
-        address asset;
         bool canDeposit;
         bool canRedeem;
+        address childStrategy;
         address factory;
         bytes32 salt;
         address vault;
@@ -282,7 +282,7 @@ contract Deploy is Script {
             salts[k] = earn[i].salt;
             inits[k] = abi.encodePacked(
                 type(EulerEarnAdapter).creationCode,
-                abi.encode(earn[i].factory, earn[i].vault, earn[i].asset, executor)
+                abi.encode(earn[i].factory, earn[i].vault, earn[i].childStrategy, executor)
             );
             canDeposit[k] = earn[i].canDeposit;
             canRedeem[k] = earn[i].canRedeem;

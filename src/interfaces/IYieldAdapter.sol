@@ -7,7 +7,7 @@ interface IYieldAdapter {
     /// @notice Executor authorized to call state-changing adapter methods.
     function executor() external view returns (address);
 
-    /// @notice Underlying token deposited into the venue (e.g. USDC).
+    /// @notice Underlying ERC-20 deposited into the venue.
     /// @return The underlying ERC-20 token address.
     function asset() external view returns (address);
 

@@ -65,7 +65,8 @@ contract GrowYieldAllAdaptersForkTest is Test {
     address internal constant EULER_EVAULT_FACTORY = 0x7F321498A801A191a93C840750ed637149dDf8D0;
     address internal constant EULER_EVAULT_USDC = 0x0A1a3b5f2041F33522C4efc754a7D096f880eE16;
     address internal constant EULER_EARN_FACTORY = 0x75F49a2621b6DeC6a5baB22ce961bF3e676EFAE6;
-    address internal constant EULER_EARN_USDC = 0x347005f3C98c3cDEf1B6c6a876608C8a19F88083;
+    address internal constant EULER_EARN_GBY_USDC = 0x1c66B3A163e1998D9235E24e782d3d54aDEa094E;
+    address internal constant EULER_EARN_CHILD_USDC = 0x8bF41Ad2b816F7c220b22F4BCD63fC2A35Ab4247;
 
     address internal constant CAPY_COMPTROLLER = 0x00dc4965916e03A734190fA382633657c71f867E;
     address internal constant CAPY_USDC = 0x5aDb71adb317CE975A405e90335068F0aF9F26C7;
@@ -122,8 +123,8 @@ contract GrowYieldAllAdaptersForkTest is Test {
         );
         earn = new EulerEarnAdapter(
             IEulerEarnFactory(EULER_EARN_FACTORY),
-            IERC4626(EULER_EARN_USDC),
-            USDC,
+            IERC4626(EULER_EARN_GBY_USDC),
+            IERC4626(EULER_EARN_CHILD_USDC),
             address(executor)
         );
         capy = new CapyFiAdapter(
@@ -178,9 +179,10 @@ contract GrowYieldAllAdaptersForkTest is Test {
         assertEq(IERC4626(morpho.child()).asset(), USDC);
 
         assertTrue(IEulerEVaultFactory(EULER_EVAULT_FACTORY).isProxy(EULER_EVAULT_USDC));
-        assertTrue(IEulerEarnFactory(EULER_EARN_FACTORY).isVault(EULER_EARN_USDC));
+        assertTrue(IEulerEarnFactory(EULER_EARN_FACTORY).isVault(EULER_EARN_GBY_USDC));
         assertEq(IERC4626(EULER_EVAULT_USDC).asset(), USDC);
-        assertEq(IERC4626(EULER_EARN_USDC).asset(), USDC);
+        assertEq(IERC4626(EULER_EARN_GBY_USDC).asset(), USDC);
+        assertEq(address(earn.childStrategy()), EULER_EARN_CHILD_USDC);
 
         assertEq(ICapyFiCaToken(CAPY_USDC).comptroller(), CAPY_COMPTROLLER);
         assertEq(ICapyFiCaToken(CAPY_USDC).underlying(), USDC);

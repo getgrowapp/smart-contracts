@@ -54,8 +54,8 @@
       {
         "salt": "0x0000000000000000000000000000000000000000000000000000000000000033",
         "factory": "0x75F49a2621b6DeC6a5baB22ce961bF3e676EFAE6",
-        "vault": "0x347005f3C98c3cDEf1B6c6a876608C8a19F88083",
-        "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "vault": "0x1c66B3A163e1998D9235E24e782d3d54aDEa094E",
+        "childStrategy": "0x8bF41Ad2b816F7c220b22F4BCD63fC2A35Ab4247",
         "canDeposit": true,
         "canRedeem": true
       }

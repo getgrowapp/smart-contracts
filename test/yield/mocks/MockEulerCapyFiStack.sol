@@ -4,11 +4,13 @@ pragma solidity ^0.8.24;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {ICapyFiCaToken} from "../../../src/interfaces/ICapyFiCaToken.sol";
 import {ICapyFiComptroller} from "../../../src/interfaces/ICapyFiComptroller.sol";
+import {IEulerEarn} from "../../../src/interfaces/IEulerEarn.sol";
 import {IEulerEarnFactory} from "../../../src/interfaces/IEulerEarnFactory.sol";
 import {IEulerEVaultFactory} from "../../../src/interfaces/IEulerEVaultFactory.sol";
 import {MockUnderlying} from "../../invariant/MockYieldVenues.sol";
@@ -49,6 +51,90 @@ contract MockEulerVault is ERC4626 {
     function asset() public view override returns (address) {
         if (useAssetOverride) return assetOverride;
         return super.asset();
+    }
+}
+
+/// @dev Euler Earn vault mock with configurable governance lock and routing queues.
+contract MockEulerEarnVault is MockEulerVault, IEulerEarn {
+    address public owner;
+    address public pendingOwner;
+    address public curator;
+    IERC4626 public immutable pinnedChild;
+    IERC4626[] internal _supplyQueue;
+    IERC4626[] internal _withdrawQueue;
+    mapping(IERC4626 => MarketConfig) internal _config;
+
+    constructor(IERC20 asset_, IERC4626 child_, string memory name_, string memory symbol_)
+        MockEulerVault(asset_, name_, symbol_)
+    {
+        pinnedChild = child_;
+        _supplyQueue.push(child_);
+        _withdrawQueue.push(child_);
+        _config[child_] = MarketConfig({
+            balance: 0,
+            cap: type(uint136).max,
+            enabled: true,
+            removableAt: 0
+        });
+        _setLocked(true);
+    }
+
+    function _setLocked(bool locked) internal {
+        owner = locked ? address(0) : msg.sender;
+        pendingOwner = address(0);
+        curator = address(0);
+    }
+
+    function setUnlocked() external {
+        _setLocked(false);
+    }
+
+    function setPendingOwner(address pendingOwner_) external {
+        pendingOwner = pendingOwner_;
+    }
+
+    function setCurator(address curator_) external {
+        curator = curator_;
+    }
+
+    function setChildEnabled(bool enabled) external {
+        _config[pinnedChild].enabled = enabled;
+    }
+
+    function setSupplyQueueHead(IERC4626 head) external {
+        if (_supplyQueue.length == 0) {
+            _supplyQueue.push(head);
+        } else {
+            _supplyQueue[0] = head;
+        }
+    }
+
+    function setWithdrawQueueHead(IERC4626 head) external {
+        if (_withdrawQueue.length == 0) {
+            _withdrawQueue.push(head);
+        } else {
+            _withdrawQueue[0] = head;
+        }
+    }
+
+    function supplyQueueLength() external view returns (uint256) {
+        return _supplyQueue.length;
+    }
+
+    function supplyQueue(uint256 index) external view returns (IERC4626) {
+        return _supplyQueue[index];
+    }
+
+    function withdrawQueueLength() external view returns (uint256) {
+        return _withdrawQueue.length;
+    }
+
+    function withdrawQueue(uint256 index) external view returns (IERC4626) {
+        return _withdrawQueue[index];
+    }
+
+    function config(IERC4626 id) external view returns (MarketConfig memory) {
+        return _config[id];
     }
 }
 

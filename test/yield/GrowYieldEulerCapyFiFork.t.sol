@@ -25,8 +25,10 @@ contract GrowYieldEulerCapyFiForkTest is Test {
     address internal constant EARN_FACTORY = 0x75F49a2621b6DeC6a5baB22ce961bF3e676EFAE6;
     /// @dev Factory-registered EVK USDC vault on Base.
     address internal constant EVAULT_USDC = 0x0A1a3b5f2041F33522C4efc754a7D096f880eE16;
-    /// @dev Factory-registered Earn USDC vault on Base.
-    address internal constant EARN_USDC = 0x347005f3C98c3cDEf1B6c6a876608C8a19F88083;
+    /// @dev Permanently locked Grow gbyUSD Euler Earn wrapper on Base.
+    address internal constant EARN_GBY_USDC = 0x1c66B3A163e1998D9235E24e782d3d54aDEa094E;
+    /// @dev Clearstar Earn USDC child strategy pinned by `EARN_GBY_USDC`.
+    address internal constant EARN_CHILD_USDC = 0x8bF41Ad2b816F7c220b22F4BCD63fC2A35Ab4247;
     address internal constant CAPY_COMPTROLLER = 0x00dc4965916e03A734190fA382633657c71f867E;
     address internal constant CAPY_USDC = 0x5aDb71adb317CE975A405e90335068F0aF9F26C7;
 
@@ -113,12 +115,15 @@ contract GrowYieldEulerCapyFiForkTest is Test {
     function test_fork_earn_depositAndRedeem_realUsdc() public {
         _freshExecutor();
         EulerEarnAdapter adapter = new EulerEarnAdapter(
-            IEulerEarnFactory(EARN_FACTORY), IERC4626(EARN_USDC), USDC, address(executor)
+            IEulerEarnFactory(EARN_FACTORY),
+            IERC4626(EARN_GBY_USDC),
+            IERC4626(EARN_CHILD_USDC),
+            address(executor)
         );
         _enable(address(adapter));
 
         // Earn vaults can hit strategy supply caps; size the deposit to remaining capacity.
-        uint256 maxDeposit = IERC4626(EARN_USDC).maxDeposit(address(adapter));
+        uint256 maxDeposit = IERC4626(EARN_GBY_USDC).maxDeposit(address(adapter));
         if (maxDeposit < 1e6) {
             vm.skip(true);
         }
@@ -139,11 +144,11 @@ contract GrowYieldEulerCapyFiForkTest is Test {
         uint256[] memory out = executor.execute(ops);
         assertGt(out[0], 0);
 
-        IERC20(EARN_USDC).approve(address(executor), type(uint256).max);
+        IERC20(EARN_GBY_USDC).approve(address(executor), type(uint256).max);
         ops[0] = Operation({
             adapter: adapter,
             kind: OperationKind.REDEEM,
-            sourceToken: EARN_USDC,
+            sourceToken: EARN_GBY_USDC,
             amount: 0,
             amountMode: AmountMode.FULL_BALANCE,
             minAmountOut: 1
@@ -153,7 +158,7 @@ contract GrowYieldEulerCapyFiForkTest is Test {
 
         assertGt(out[0], 0);
         assertEq(IERC20(USDC).balanceOf(address(adapter)), 0);
-        assertEq(IERC20(EARN_USDC).balanceOf(address(adapter)), 0);
+        assertEq(IERC20(EARN_GBY_USDC).balanceOf(address(adapter)), 0);
     }
 
     function test_fork_capy_depositAndRedeem_realUsdc() public {

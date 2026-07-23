@@ -189,6 +189,21 @@ contract DeployTest is Test {
         assertEq(c.salt, bytes32(uint256(0x10)), "salt");
     }
 
+    function test_eulerEarnCfgDecodesInKeyOrder() public pure {
+        string memory json = "{" '"canDeposit":true,' '"canRedeem":true,'
+            '"childStrategy":"0x00000000000000000000000000000000000000C5",'
+            '"factory":"0x0000000000000000000000000000000000000EA1",'
+            '"salt":"0x0000000000000000000000000000000000000000000000000000000000000013",'
+            '"vault":"0x0000000000000000000000000000000000000EA2"' "}";
+        Deploy.EulerEarnCfg memory c = abi.decode(vm.parseJson(json), (Deploy.EulerEarnCfg));
+        assertTrue(c.canDeposit, "canDeposit");
+        assertTrue(c.canRedeem, "canRedeem");
+        assertEq(c.childStrategy, address(0xC5), "childStrategy");
+        assertEq(c.factory, address(0xEA1), "factory");
+        assertEq(c.salt, bytes32(uint256(0x13)), "salt");
+        assertEq(c.vault, address(0xEA2), "vault");
+    }
+
     function test_capyFiCfgDecodesInKeyOrder() public pure {
         string memory json = "{" '"asset":"0x00000000000000000000000000000000000000A5",'
             '"caToken":"0x00000000000000000000000000000000000000CA",' '"canDeposit":false,'
