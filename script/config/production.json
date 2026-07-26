@@ -1,7 +1,7 @@
 {
   "executor": {
     "maxLossBps": 50,
-    "riskGuardian": "0x1111111111111111111111111111111111111111"
+    "riskGuardian": "0xe8D212F886109cbf01e8294E3640a6Fb05544ff3"
   },
   "registry": {
     "owner": "0x4444444444444444444444444444444444444444",
@@ -14,7 +14,7 @@
     }
   },
   "policyModule": {
-    "requiredPaymaster": "0x2222222222222222222222222222222222222222",
+    "requiredPaymaster": "0x00000000000667F27D4DB42334ec11a25db7EBb4",
     "maxVerificationGas": 500000,
     "maxCallGas": 2000000,
     "maxPreVerificationGas": 150000,
@@ -35,14 +35,51 @@
   "vaults": {
     "aave": [
       {
-        "vault": "0xaaaa000000000000000000000000000000000003",
+        "salt": "0x0000000000000000000000000000000000000000000000000000000000000030",
+        "pool": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
+        "dataProvider": "0x0F43731EB8d45A581f4a36DD74F5f358bc90C73A",
+        "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
         "canDeposit": true,
         "canRedeem": true
       }
     ],
     "morpho": [
       {
-        "vault": "0xbbbb000000000000000000000000000000000001",
+        "salt": "0x0000000000000000000000000000000000000000000000000000000000000031",
+        "wrapper": "0xa157a87D41ef25d033082180858DB0813ad61d39",
+        "factory": "0x4501125508079A99ebBebCE205DeC9593C2b5857",
+        "v1AdapterFactory": "0xF42D9c36b34c9c2CF3Bc30eD2a52a90eEB604642",
+        "eligibility": "0x006A9c616E87F10635896D3B16D1E6922B5Ace16",
+        "canDeposit": true,
+        "canRedeem": true
+      }
+    ],
+    "eulerEVault": [
+      {
+        "salt": "0x0000000000000000000000000000000000000000000000000000000000000032",
+        "factory": "0x7F321498A801A191a93C840750ed637149dDf8D0",
+        "eVault": "0x0A1a3b5f2041F33522C4efc754a7D096f880eE16",
+        "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "canDeposit": true,
+        "canRedeem": true
+      }
+    ],
+    "eulerEarn": [
+      {
+        "salt": "0x0000000000000000000000000000000000000000000000000000000000000033",
+        "factory": "0x75F49a2621b6DeC6a5baB22ce961bF3e676EFAE6",
+        "vault": "0x347005f3C98c3cDEf1B6c6a876608C8a19F88083",
+        "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "canDeposit": true,
+        "canRedeem": true
+      }
+    ],
+    "capyfi": [
+      {
+        "salt": "0x0000000000000000000000000000000000000000000000000000000000000034",
+        "comptroller": "0x00dc4965916e03A734190fA382633657c71f867E",
+        "caToken": "0x5aDb71adb317CE975A405e90335068F0aF9F26C7",
+        "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
         "canDeposit": true,
         "canRedeem": true
       }

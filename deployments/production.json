@@ -1,0 +1,37 @@
+{
+  "adapterAddresses": [
+    "0x47f181316C96ee9045c7f5eFfACa47C23658478a",
+    "0xC100691d7a8421477bE09CCC0F4d185144E2d085",
+    "0x21490160229E4d9586cfF8D9537b6fCbB4FF4Af0",
+    "0xbBa5E40133Df5Bdf89C01c5794ec24bDc5B96Cc8",
+    "0x9A918b6B3BF86Da156B1CD1571e4cab4CDbdbc1b"
+  ],
+  "adapterCanDeposit": [
+    true,
+    true,
+    true,
+    true,
+    true
+  ],
+  "adapterCanRedeem": [
+    true,
+    true,
+    true,
+    true,
+    true
+  ],
+  "adapterKinds": [
+    "aave",
+    "morpho",
+    "eulerEVault",
+    "eulerEarn",
+    "capyfi"
+  ],
+  "chainId": 8453,
+  "commitSha": "21dbf5640762bbde7fc07abceef6488c970e44cc",
+  "deployer": "0x088Da052247C69B52482179a56B3a96398D3139c",
+  "executor": "0xA25156b33dF41D2199671625Bf2314e0A1a31b9D",
+  "policyModule": "0x49246E8e7C0F0479Dd208039290FDb21B94E8429",
+  "registry": "0xC797FDb0241f078a58A37999f7B790dC2D1C951e",
+  "timestamp": 1784682119
+}
