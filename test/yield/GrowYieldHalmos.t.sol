@@ -21,7 +21,7 @@ contract GrowYieldHalmosTest is GrowYieldTestBase {
     }
 
     function _depositOps() internal view returns (Operation[] memory) {
-        return _ops1(_op(aaveAdapter, OperationKind.DEPOSIT, type(uint256).max));
+        return _ops1(_op(aaveVault, OperationKind.DEPOSIT, type(uint256).max));
     }
 
     /// @custom:halmos --solver-timeout-assertion 0
@@ -94,7 +94,7 @@ contract GrowYieldHalmosTest is GrowYieldTestBase {
         underlying.mint(account, amount);
         vm.startPrank(account);
         IERC20(address(underlying)).approve(address(executor), type(uint256).max);
-        executor.execute(_ops1(_op(aaveAdapter, OperationKind.DEPOSIT, type(uint256).max)));
+        executor.execute(_ops1(_op(aaveVault, OperationKind.DEPOSIT, type(uint256).max)));
         vm.stopPrank();
 
         assert(underlying.balanceOf(address(executor)) == 0);

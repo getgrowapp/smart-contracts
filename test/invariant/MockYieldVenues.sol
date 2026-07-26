@@ -47,21 +47,32 @@ contract MockAToken is ERC20 {
 }
 
 /// @dev Aave-like pool for invariant testing. aTokens mint 1:1 with underlying.
+///      Like the real pool it serves many reserves; `underlying`/`aToken` name the first.
 contract MockAavePool is IAaveV3Pool {
     using SafeERC20 for IERC20;
 
     MockUnderlying public immutable underlying;
     MockAToken public immutable aToken;
 
+    mapping(address asset => MockAToken) public aTokens;
+
     constructor(MockUnderlying underlying_) {
         underlying = underlying_;
         aToken = new MockAToken(address(this), address(underlying_));
+        aTokens[address(underlying_)] = aToken;
+    }
+
+    /// @dev Lists an additional reserve so one pool can back several adapters.
+    function addReserve(MockUnderlying asset_) external returns (MockAToken token) {
+        token = new MockAToken(address(this), address(asset_));
+        aTokens[address(asset_)] = token;
     }
 
     function supply(address asset, uint256 amount, address onBehalfOf, uint16) external override {
-        require(asset == address(underlying), "asset");
+        MockAToken token = aTokens[asset];
+        require(address(token) != address(0), "asset");
         IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
-        aToken.mint(onBehalfOf, amount);
+        token.mint(onBehalfOf, amount);
     }
 
     function withdraw(address asset, uint256 amount, address to)
@@ -69,10 +80,11 @@ contract MockAavePool is IAaveV3Pool {
         override
         returns (uint256)
     {
-        require(asset == address(underlying), "asset");
+        MockAToken token = aTokens[asset];
+        require(address(token) != address(0), "asset");
         // Real Aave V3 treats uint256.max as "full balance of msg.sender".
-        if (amount == type(uint256).max) amount = aToken.balanceOf(msg.sender);
-        aToken.burn(msg.sender, amount);
+        if (amount == type(uint256).max) amount = token.balanceOf(msg.sender);
+        token.burn(msg.sender, amount);
         IERC20(asset).safeTransfer(to, amount);
         return amount;
     }

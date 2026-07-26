@@ -21,7 +21,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
     }
 
     function _depositOps() internal view returns (Operation[] memory) {
-        return _ops1(_op(aaveAdapter, OperationKind.DEPOSIT, type(uint256).max));
+        return _ops1(_op(aaveVault, OperationKind.DEPOSIT, type(uint256).max));
     }
 
     function _validDeposit(uint256 key)
@@ -43,7 +43,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
         PackedUserOperation memory userOp = _baseUserOp(
             _batch1(
                 address(aavePool.aToken()),
-                _ops1(_op(aaveAdapter, OperationKind.REDEEM, type(uint256).max))
+                _ops1(_op(aaveVault, OperationKind.REDEEM, type(uint256).max))
             )
         );
         bytes32 hash = keccak256("redeem");
@@ -59,8 +59,8 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
             _batch(
                 tokens,
                 _ops2(
-                    _op(aaveAdapter, OperationKind.REDEEM, type(uint256).max),
-                    _op(morphoAdapter, OperationKind.DEPOSIT, type(uint256).max)
+                    _op(aaveVault, OperationKind.REDEEM, type(uint256).max),
+                    _op(morphoVault, OperationKind.DEPOSIT, type(uint256).max)
                 )
             )
         );
@@ -330,7 +330,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
 
         Operation[] memory ops = new Operation[](5);
         for (uint256 i; i < ops.length; ++i) {
-            ops[i] = _op(aaveAdapter, OperationKind.DEPOSIT, 1e6);
+            ops[i] = _op(aaveVault, OperationKind.DEPOSIT, 1e6);
         }
         _assertOwnerSignedPolicyRejection(_batch1(address(underlying), ops));
     }

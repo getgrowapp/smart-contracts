@@ -94,7 +94,7 @@ library GrowYieldPolicyLib {
     }
 
     /// @dev Returns unique source tokens in first-appearance order, or an empty array
-    ///      if an operation has a zero adapter or source token.
+    ///      if an operation has a zero vault or source token.
     function _sourceTokens(Operation[] memory ops) private pure returns (address[] memory tokens) {
         tokens = new address[](ops.length);
         uint256 unique;
@@ -102,7 +102,7 @@ library GrowYieldPolicyLib {
         for (uint256 i; i < ops.length; ++i) {
             Operation memory op = ops[i];
             address token = op.sourceToken;
-            if (address(op.adapter) == address(0) || token == address(0) || op.minAmountOut == 0) {
+            if (op.vault == address(0) || token == address(0) || op.minAmountOut == 0) {
                 return new address[](0);
             }
 

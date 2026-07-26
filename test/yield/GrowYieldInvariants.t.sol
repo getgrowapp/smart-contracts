@@ -9,12 +9,9 @@ import {
 
 import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
 import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
-import {
-    AmountMode,
-    IYieldAdapter,
-    Operation,
-    OperationKind
-} from "../../src/interfaces/IGrowYieldExecutor.sol";
+import {Venue} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {IYieldAdapter} from "../../src/interfaces/IYieldAdapter.sol";
+import {AmountMode, Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
 
 /// @dev Handler for stateful invariants. Mimics successful policy batches:
 ///      approve-max -> execute -> approve-zero, always as the smart account.
@@ -23,25 +20,25 @@ contract GrowYieldHandler is Test {
     address public immutable account;
     address public immutable underlying;
     address public immutable aToken;
-    IYieldAdapter public immutable aaveAdapter;
-    IYieldAdapter public immutable morphoAdapter;
-    address public immutable morphoWrapper;
+
+    /// @dev Venues, not adapters: the executor resolves the adapter from the registry.
+    address public immutable aaveVault;
+    address public immutable morphoVault;
 
     constructor(
         GrowYieldExecutor executor_,
         address account_,
         address underlying_,
         address aToken_,
-        IYieldAdapter aaveAdapter_,
-        IYieldAdapter morphoAdapter_
+        address aaveVault_,
+        address morphoVault_
     ) {
         executor = executor_;
         account = account_;
         underlying = underlying_;
         aToken = aToken_;
-        aaveAdapter = aaveAdapter_;
-        morphoAdapter = morphoAdapter_;
-        morphoWrapper = morphoAdapter_.positionToken();
+        aaveVault = aaveVault_;
+        morphoVault = morphoVault_;
     }
 
     function deposit(uint256 amountSeed, bool useAave) external {
@@ -52,7 +49,7 @@ contract GrowYieldHandler is Test {
             underlying,
             _one(
                 Operation({
-                    adapter: useAave ? aaveAdapter : morphoAdapter,
+                    vault: useAave ? aaveVault : morphoVault,
                     kind: OperationKind.DEPOSIT,
                     sourceToken: underlying,
                     amount: amount,
@@ -64,7 +61,7 @@ contract GrowYieldHandler is Test {
     }
 
     function redeem(uint256 amountSeed, bool useAave) external {
-        address position = useAave ? aToken : morphoWrapper;
+        address position = useAave ? aToken : morphoVault;
         uint256 balance = IERC20(position).balanceOf(account);
         if (balance == 0) return;
 
@@ -73,7 +70,7 @@ contract GrowYieldHandler is Test {
             position,
             _one(
                 Operation({
-                    adapter: useAave ? aaveAdapter : morphoAdapter,
+                    vault: useAave ? aaveVault : morphoVault,
                     kind: OperationKind.REDEEM,
                     sourceToken: position,
                     amount: amount,
@@ -85,12 +82,12 @@ contract GrowYieldHandler is Test {
     }
 
     function reallocate(bool aaveToMorpho) external {
-        address sourcePosition = aaveToMorpho ? aToken : morphoWrapper;
+        address sourcePosition = aaveToMorpho ? aToken : morphoVault;
         if (IERC20(sourcePosition).balanceOf(account) == 0) return;
 
         Operation[] memory ops = new Operation[](2);
         ops[0] = Operation({
-            adapter: aaveToMorpho ? aaveAdapter : morphoAdapter,
+            vault: aaveToMorpho ? aaveVault : morphoVault,
             kind: OperationKind.REDEEM,
             sourceToken: sourcePosition,
             amount: 0,
@@ -98,7 +95,7 @@ contract GrowYieldHandler is Test {
             minAmountOut: 1
         });
         ops[1] = Operation({
-            adapter: aaveToMorpho ? morphoAdapter : aaveAdapter,
+            vault: aaveToMorpho ? morphoVault : aaveVault,
             kind: OperationKind.DEPOSIT,
             sourceToken: underlying,
             amount: 0,
@@ -140,8 +137,8 @@ contract GrowYieldInvariants is GrowYieldTestBase {
             account,
             address(underlying),
             address(aavePool.aToken()),
-            aaveAdapter,
-            morphoAdapter
+            aaveVault,
+            morphoVault
         );
 
         // Seed one position so redeem/reallocate have material.
@@ -149,7 +146,7 @@ contract GrowYieldInvariants is GrowYieldTestBase {
         vm.startPrank(account);
         underlying.approve(address(executor), type(uint256).max);
         Operation[] memory ops = new Operation[](1);
-        ops[0] = _op(aaveAdapter, OperationKind.DEPOSIT, type(uint256).max);
+        ops[0] = _op(aaveVault, OperationKind.DEPOSIT, type(uint256).max);
         executor.execute(ops);
         underlying.approve(address(executor), 0);
         vm.stopPrank();
@@ -184,6 +181,27 @@ contract GrowYieldInvariants is GrowYieldTestBase {
         // Mock venues are lossless; every deposit is matched by mint in the handler.
         assertLe(value, 10_000e6 + 1_000_000e6 * 512); // depth * max mint upper bound
         assertGt(value, 0);
+    }
+
+    /// @dev No operation path admits a vault, edits an admitted entry, or retargets the
+    ///      account's registry: those require the registry owner and the account respectively.
+    function invariant_registryEntriesAndAccountSelectionAreStable() public view {
+        assertEq(address(executor.accountRegistry(account)), address(registry));
+        assertEq(registry.vaultCount(), 3);
+
+        address[3] memory expected = [aaveVault, aaveVaultOther, morphoVault];
+        for (uint256 i; i < expected.length; ++i) {
+            Venue memory admitted = registry.venue(expected[i]);
+            assertEq(registry.vaultAt(i), expected[i]);
+            assertTrue(admitted.canDeposit);
+            assertTrue(admitted.canRedeem);
+            assertEq(registry.adapterCodeHash(admitted.adapter), admitted.adapter.codehash);
+            assertEq(
+                admitted.positionToken,
+                IYieldAdapter(admitted.adapter).positionToken(expected[i]),
+                "pinned pair still matches"
+            );
+        }
     }
 
     /// @dev A malformed policy signature never validates.

@@ -10,7 +10,10 @@ import {AaveV3Adapter} from "../../src/adapters/AaveV3Adapter.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
 import {AmountMode, Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
-import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {
+    IGrowYieldAdapterRegistry,
+    Protocol
+} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 
 /// @dev Aave V3 address book root; resolves current pool + data provider on fork.
 interface IPoolAddressesProvider {
@@ -49,13 +52,30 @@ contract GrowYieldForkTest is Test {
             USDC,
             address(executor)
         );
-        IGrowYieldAdapterRegistry.AdapterConfig[] memory configs =
-            new IGrowYieldAdapterRegistry.AdapterConfig[](1);
-        configs[0] = IGrowYieldAdapterRegistry.AdapterConfig(address(adapter), true, true);
-        registry = new GrowYieldAdapterRegistry(address(executor), configs);
-        executor.initializeRegistry(registry);
-        vm.prank(account);
-        executor.setAdapterPolicy(address(adapter), 1_000_000_000e6, 1_000_000_000e6, 1 days);
+        registry = new GrowYieldAdapterRegistry(
+            address(executor),
+            address(this),
+            IGrowYieldAdapterRegistry.Registrars({
+                aavePool: provider.getPool(),
+                aaveDataProvider: provider.getPoolDataProvider(),
+                morphoVaultFactory: address(0),
+                morphoAdapterFactory: address(0),
+                morphoEligibility: address(0),
+                eulerEVaultFactory: address(0),
+                eulerEarnFactory: address(0),
+                capyFiComptroller: address(0)
+            })
+        );
+        IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
+            new IGrowYieldAdapterRegistry.VaultConfig[](1);
+        vaults[0] =
+            IGrowYieldAdapterRegistry.VaultConfig(address(adapter), Protocol.AAVE, true, true);
+        registry.addVaults(vaults);
+
+        vm.startPrank(account);
+        executor.setAccountRegistry(registry);
+        executor.setVaultPolicy(address(adapter), 1_000_000_000e6, 1_000_000_000e6, 1 days);
+        vm.stopPrank();
     }
 
     function test_fork_depositAndRedeem_realAaveUsdc() public {

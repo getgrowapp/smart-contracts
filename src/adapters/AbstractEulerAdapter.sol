@@ -8,27 +8,23 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
 /// @title AbstractEulerAdapter
-/// @notice Shared ERC-4626 deposit/redeem path for Euler EVK and Euler Earn vaults.
-/// @dev Subclasses supply only protocol-specific authenticity checks (factory proofs);
-///      Grow risk approval is registry inclusion. The adapter retains no shares or
-///      assets — outputs credit `receiver` directly.
+/// @notice Shared ERC-4626 deposit/redeem path for every Euler EVK or Euler Earn vault of one
+///         factory.
+/// @dev `vault` is the ERC-4626 vault, which is also its own position token. Subclasses supply
+///      only the protocol-specific authenticity check (factory membership); Grow risk approval is
+///      registry admission, and the venue's underlying is pinned by the registry and re-verified
+///      by the executor. The adapter retains no shares or assets — outputs credit `receiver`
+///      directly.
 /// @custom:security-contact security@getgrowapp.co
 abstract contract AbstractEulerAdapter is IYieldAdapter {
     using SafeERC20 for IERC20;
 
-    /// @notice The Euler ERC-4626 vault (also the position token).
-    IERC4626 public immutable vault;
-
     /// @notice Sole authorized caller of `deposit` / `redeem`.
     address public immutable executor;
-
-    /// @inheritdoc IYieldAdapter
-    address public immutable asset;
 
     error Invalid();
     error OnlyExecutor();
     error NonCanonical();
-    error AssetMismatch();
     error NonCompliantVault();
     error ResidualBalance();
     error ResidualAllowance();
@@ -38,61 +34,61 @@ abstract contract AbstractEulerAdapter is IYieldAdapter {
         _;
     }
 
-    /// @param vault_ Euler vault (EVault or Earn) used as the position token.
-    /// @param asset_ Expected underlying; must equal `vault.asset()`.
     /// @param executor_ GrowYield executor authorized to call this adapter.
-    constructor(IERC4626 vault_, address asset_, address executor_) {
-        if (
-            address(vault_).code.length == 0 || asset_.code.length == 0
-                || executor_.code.length == 0
-        ) {
-            revert Invalid();
-        }
-        if (vault_.asset() != asset_) revert AssetMismatch();
-
-        vault = vault_;
-        asset = asset_;
+    constructor(address executor_) {
+        if (executor_.code.length == 0) revert Invalid();
         executor = executor_;
     }
 
     /// @inheritdoc IYieldAdapter
-    function positionToken() external view returns (address) {
-        return address(vault);
+    function asset(address vault) external view returns (address) {
+        return IERC4626(vault).asset();
     }
 
     /// @inheritdoc IYieldAdapter
-    function previewDeposit(uint256 assets) external view returns (uint256) {
-        return vault.previewDeposit(assets);
+    /// @dev An Euler vault is its own share token.
+    function positionToken(address vault) external pure returns (address) {
+        return vault;
     }
 
     /// @inheritdoc IYieldAdapter
-    function previewRedeem(uint256 shares) external view returns (uint256) {
-        return vault.previewRedeem(shares);
+    function previewDeposit(address vault, uint256 assets) external view returns (uint256) {
+        return IERC4626(vault).previewDeposit(assets);
     }
 
     /// @inheritdoc IYieldAdapter
-    function deposit(uint256 assets, address receiver) external onlyExecutor returns (uint256) {
-        _assertCanonical();
+    function previewRedeem(address vault, uint256 shares) external view returns (uint256) {
+        return IERC4626(vault).previewRedeem(shares);
+    }
 
-        uint256 balanceBefore = IERC20(asset).balanceOf(address(this));
-        uint256 adapterSharesBefore = IERC20(address(vault)).balanceOf(address(this));
-        uint256 sharesBefore = IERC20(address(vault)).balanceOf(receiver);
+    /// @inheritdoc IYieldAdapter
+    function deposit(address vault, uint256 assets, address receiver)
+        external
+        onlyExecutor
+        returns (uint256)
+    {
+        _assertCanonical(vault);
 
-        IERC20(asset).forceApprove(address(vault), assets);
-        uint256 shares = vault.deposit(assets, receiver);
-        IERC20(asset).forceApprove(address(vault), 0);
-        if (IERC20(asset).allowance(address(this), address(vault)) != 0) {
+        address underlying = IERC4626(vault).asset();
+        uint256 balanceBefore = IERC20(underlying).balanceOf(address(this));
+        uint256 adapterSharesBefore = IERC20(vault).balanceOf(address(this));
+        uint256 sharesBefore = IERC20(vault).balanceOf(receiver);
+
+        IERC20(underlying).forceApprove(vault, assets);
+        uint256 shares = IERC4626(vault).deposit(assets, receiver);
+        IERC20(underlying).forceApprove(vault, 0);
+        if (IERC20(underlying).allowance(address(this), vault) != 0) {
             revert ResidualAllowance();
         }
 
         // Shares must credit `receiver` directly — adapter must not retain the mint.
-        if (IERC20(address(vault)).balanceOf(receiver) - sharesBefore != shares) {
+        if (IERC20(vault).balanceOf(receiver) - sharesBefore != shares) {
             revert NonCompliantVault();
         }
-        if (IERC20(address(vault)).balanceOf(address(this)) != adapterSharesBefore) {
+        if (IERC20(vault).balanceOf(address(this)) != adapterSharesBefore) {
             revert ResidualBalance();
         }
-        if (IERC20(asset).balanceOf(address(this)) != balanceBefore - assets) {
+        if (IERC20(underlying).balanceOf(address(this)) != balanceBefore - assets) {
             revert ResidualBalance();
         }
 
@@ -100,28 +96,33 @@ abstract contract AbstractEulerAdapter is IYieldAdapter {
     }
 
     /// @inheritdoc IYieldAdapter
-    function redeem(uint256 shares, address receiver) external onlyExecutor returns (uint256) {
-        _assertCanonical();
+    function redeem(address vault, uint256 shares, address receiver)
+        external
+        onlyExecutor
+        returns (uint256)
+    {
+        _assertCanonical(vault);
 
+        address underlying = IERC4626(vault).asset();
         // Shares are held only because the executor transferred the attributed amount
         // here; `redeem(..., receiver, address(this))` sends underlying to `receiver`.
-        uint256 sharesBefore = IERC20(address(vault)).balanceOf(address(this));
-        uint256 assetBefore = IERC20(asset).balanceOf(address(this));
-        uint256 assetsOut = vault.redeem(shares, receiver, address(this));
+        uint256 sharesBefore = IERC20(vault).balanceOf(address(this));
+        uint256 assetBefore = IERC20(underlying).balanceOf(address(this));
+        uint256 assetsOut = IERC4626(vault).redeem(shares, receiver, address(this));
 
         // Consume exactly the caller-attributed share amount. Pre-existing donations
         // are deliberately not swept into an unrelated account's redemption.
-        if (IERC20(address(vault)).balanceOf(address(this)) != sharesBefore - shares) {
+        if (IERC20(vault).balanceOf(address(this)) != sharesBefore - shares) {
             revert ResidualBalance();
         }
         // Underlying must go to `receiver`; adapter must not retain the redeem output.
-        if (IERC20(asset).balanceOf(address(this)) != assetBefore) {
+        if (IERC20(underlying).balanceOf(address(this)) != assetBefore) {
             revert ResidualBalance();
         }
 
         return assetsOut;
     }
 
-    /// @dev Re-validates factory authenticity and underlying binding before each op.
-    function _assertCanonical() internal view virtual;
+    /// @dev Re-validates that `vault` is a genuine venue of this adapter's protocol.
+    function _assertCanonical(address vault) internal view virtual;
 }

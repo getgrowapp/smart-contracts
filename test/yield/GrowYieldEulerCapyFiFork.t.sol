@@ -15,7 +15,10 @@ import {ICapyFiComptroller} from "../../src/interfaces/ICapyFiComptroller.sol";
 import {IEulerEarnFactory} from "../../src/interfaces/IEulerEarnFactory.sol";
 import {IEulerEVaultFactory} from "../../src/interfaces/IEulerEVaultFactory.sol";
 import {AmountMode, Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
-import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {
+    IGrowYieldAdapterRegistry,
+    Protocol
+} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 
 /// @notice Optional Base mainnet fork coverage for Euler EVK, Euler Earn, and CapyFi.
 /// @dev Requires `BASE_RPC_URL`. Skips if unset.
@@ -31,6 +34,7 @@ contract GrowYieldEulerCapyFiForkTest is Test {
     address internal constant CAPY_USDC = 0x5aDb71adb317CE975A405e90335068F0aF9F26C7;
 
     GrowYieldExecutor internal executor;
+    GrowYieldAdapterRegistry internal registry;
     address internal account;
 
     function setUp() public {
@@ -43,24 +47,41 @@ contract GrowYieldEulerCapyFiForkTest is Test {
         executor = new GrowYieldExecutor(50, address(this));
     }
 
-    function _enable(address adapter) internal {
-        IGrowYieldAdapterRegistry.AdapterConfig[] memory configs =
-            new IGrowYieldAdapterRegistry.AdapterConfig[](1);
-        configs[0] = IGrowYieldAdapterRegistry.AdapterConfig(adapter, true, true);
-        GrowYieldAdapterRegistry registry = new GrowYieldAdapterRegistry(address(executor), configs);
-        // Fresh executor per adapter suite below when registry already set.
-        if (address(executor.registry()) == address(0)) {
-            executor.initializeRegistry(registry);
-        }
-        vm.prank(account);
-        executor.setAdapterPolicy(adapter, 1_000_000_000e6, 1_000_000_000e6, 1 days);
+    function _enable(address adapter, address vault, Protocol protocol) internal {
+        registry = new GrowYieldAdapterRegistry(
+            address(executor),
+            address(this),
+            IGrowYieldAdapterRegistry.Registrars({
+                aavePool: address(0),
+                aaveDataProvider: address(0),
+                morphoVaultFactory: address(0),
+                morphoAdapterFactory: address(0),
+                morphoEligibility: address(0),
+                eulerEVaultFactory: EVAULT_FACTORY,
+                eulerEarnFactory: EARN_FACTORY,
+                capyFiComptroller: CAPY_COMPTROLLER
+            })
+        );
+        IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
+            new IGrowYieldAdapterRegistry.VaultConfig[](1);
+        vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(adapter, vault, protocol, true, true);
+        registry.addVaults(vaults);
+
+        vm.startPrank(account);
+        executor.setAccountRegistry(registry);
+        executor.setVaultPolicy(vault, 1_000_000_000e6, 1_000_000_000e6, 1 days);
+        vm.stopPrank();
+    }
+
+    function _adapterOf(address vault) internal view returns (address) {
+        return registry.vaultAdapter(vault);
     }
 
     function _freshExecutor() internal {
         executor = new GrowYieldExecutor(50, address(this));
     }
 
-    function _depositRedeem(address adapterAddr, address position) internal {
+    function _depositRedeem(address vault, address position) internal {
         uint256 amount = 5_000e6;
         deal(USDC, account, amount);
 
@@ -69,7 +90,7 @@ contract GrowYieldEulerCapyFiForkTest is Test {
 
         Operation[] memory ops = new Operation[](1);
         ops[0] = Operation({
-            adapter: EulerEVaultAdapter(adapterAddr),
+            vault: vault,
             kind: OperationKind.DEPOSIT,
             sourceToken: USDC,
             amount: 0,
@@ -80,12 +101,12 @@ contract GrowYieldEulerCapyFiForkTest is Test {
         assertGt(out[0], 0);
         assertGe(IERC20(position).balanceOf(account), out[0]);
         assertEq(IERC20(USDC).balanceOf(account), 0);
-        assertEq(IERC20(USDC).balanceOf(adapterAddr), 0);
-        assertEq(IERC20(USDC).allowance(adapterAddr, position), 0);
+        assertEq(IERC20(USDC).balanceOf(_adapterOf(vault)), 0);
+        assertEq(IERC20(USDC).allowance(_adapterOf(vault), position), 0);
 
         IERC20(position).approve(address(executor), type(uint256).max);
         ops[0] = Operation({
-            adapter: EulerEVaultAdapter(adapterAddr),
+            vault: vault,
             kind: OperationKind.REDEEM,
             sourceToken: position,
             amount: 0,
@@ -97,25 +118,23 @@ contract GrowYieldEulerCapyFiForkTest is Test {
 
         assertGe(out[0], (amount * 9900) / 10_000);
         assertGe(IERC20(USDC).balanceOf(account), (amount * 9900) / 10_000);
-        assertEq(IERC20(USDC).balanceOf(adapterAddr), 0);
-        assertEq(IERC20(position).balanceOf(adapterAddr), 0);
+        assertEq(IERC20(USDC).balanceOf(_adapterOf(vault)), 0);
+        assertEq(IERC20(position).balanceOf(_adapterOf(vault)), 0);
     }
 
     function test_fork_evault_depositAndRedeem_realUsdc() public {
         _freshExecutor();
-        EulerEVaultAdapter adapter = new EulerEVaultAdapter(
-            IEulerEVaultFactory(EVAULT_FACTORY), IERC4626(EVAULT_USDC), USDC, address(executor)
-        );
-        _enable(address(adapter));
-        _depositRedeem(address(adapter), EVAULT_USDC);
+        EulerEVaultAdapter adapter =
+            new EulerEVaultAdapter(IEulerEVaultFactory(EVAULT_FACTORY), address(executor));
+        _enable(address(adapter), EVAULT_USDC, Protocol.EULER_EVK);
+        _depositRedeem(EVAULT_USDC, EVAULT_USDC);
     }
 
     function test_fork_earn_depositAndRedeem_realUsdc() public {
         _freshExecutor();
-        EulerEarnAdapter adapter = new EulerEarnAdapter(
-            IEulerEarnFactory(EARN_FACTORY), IERC4626(EARN_USDC), USDC, address(executor)
-        );
-        _enable(address(adapter));
+        EulerEarnAdapter adapter =
+            new EulerEarnAdapter(IEulerEarnFactory(EARN_FACTORY), address(executor));
+        _enable(address(adapter), EARN_USDC, Protocol.EULER_EARN);
 
         // Earn vaults can hit strategy supply caps; size the deposit to remaining capacity.
         uint256 maxDeposit = IERC4626(EARN_USDC).maxDeposit(address(adapter));
@@ -129,7 +148,7 @@ contract GrowYieldEulerCapyFiForkTest is Test {
         IERC20(USDC).approve(address(executor), type(uint256).max);
         Operation[] memory ops = new Operation[](1);
         ops[0] = Operation({
-            adapter: adapter,
+            vault: EARN_USDC,
             kind: OperationKind.DEPOSIT,
             sourceToken: USDC,
             amount: amount,
@@ -141,7 +160,7 @@ contract GrowYieldEulerCapyFiForkTest is Test {
 
         IERC20(EARN_USDC).approve(address(executor), type(uint256).max);
         ops[0] = Operation({
-            adapter: adapter,
+            vault: EARN_USDC,
             kind: OperationKind.REDEEM,
             sourceToken: EARN_USDC,
             amount: 0,
@@ -158,10 +177,9 @@ contract GrowYieldEulerCapyFiForkTest is Test {
 
     function test_fork_capy_depositAndRedeem_realUsdc() public {
         _freshExecutor();
-        CapyFiAdapter adapter = new CapyFiAdapter(
-            address(executor), ICapyFiComptroller(CAPY_COMPTROLLER), ICapyFiCaToken(CAPY_USDC), USDC
-        );
-        _enable(address(adapter));
+        CapyFiAdapter adapter =
+            new CapyFiAdapter(address(executor), ICapyFiComptroller(CAPY_COMPTROLLER));
+        _enable(address(adapter), CAPY_USDC, Protocol.CAPYFI);
 
         uint256 amount = 5_000e6;
         deal(USDC, account, amount);
@@ -171,7 +189,7 @@ contract GrowYieldEulerCapyFiForkTest is Test {
 
         Operation[] memory ops = new Operation[](1);
         ops[0] = Operation({
-            adapter: adapter,
+            vault: CAPY_USDC,
             kind: OperationKind.DEPOSIT,
             sourceToken: USDC,
             amount: 0,
@@ -185,7 +203,7 @@ contract GrowYieldEulerCapyFiForkTest is Test {
 
         IERC20(CAPY_USDC).approve(address(executor), type(uint256).max);
         ops[0] = Operation({
-            adapter: adapter,
+            vault: CAPY_USDC,
             kind: OperationKind.REDEEM,
             sourceToken: CAPY_USDC,
             amount: 0,
@@ -200,23 +218,57 @@ contract GrowYieldEulerCapyFiForkTest is Test {
         assertEq(IERC20(CAPY_USDC).balanceOf(address(adapter)), 0);
     }
 
-    function test_fork_evault_rejectsFakeVault() public {
+    /// @dev Venue authenticity is now proven at admission against the live factory, not in the
+    ///      adapter constructor, so a vault the factory never created cannot be admitted.
+    function test_fork_evault_registryRejectsFakeVault() public {
         _freshExecutor();
-        // Arbitrary EOA-like address with no factory registration.
-        address fake = makeAddr("fakeVault");
-        vm.expectRevert();
-        new EulerEVaultAdapter(
-            IEulerEVaultFactory(EVAULT_FACTORY), IERC4626(fake), USDC, address(executor)
+        EulerEVaultAdapter adapter =
+            new EulerEVaultAdapter(IEulerEVaultFactory(EVAULT_FACTORY), address(executor));
+        GrowYieldAdapterRegistry r = _forkRegistry();
+
+        IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
+            new IGrowYieldAdapterRegistry.VaultConfig[](1);
+        vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
+            address(adapter), EARN_USDC, Protocol.EULER_EVK, true, true
         );
+
+        // A real Earn vault is not an EVK proxy: the pinned EVK factory does not recognize it.
+        vm.expectRevert(IGrowYieldAdapterRegistry.NotCanonicalVenue.selector);
+        r.addVaults(vaults);
     }
 
-    function test_fork_capy_rejectsUnlistedOrWrongComptroller() public {
+    /// @dev An adapter wired to a Comptroller the registry does not pin cannot admit a venue,
+    ///      even a genuine one.
+    function test_fork_capy_registryRejectsWrongComptroller() public {
         _freshExecutor();
-        // Real caToken but wrong Comptroller pin.
-        address wrongComptroller = EVAULT_FACTORY;
-        vm.expectRevert();
-        new CapyFiAdapter(
-            address(executor), ICapyFiComptroller(wrongComptroller), ICapyFiCaToken(CAPY_USDC), USDC
+        CapyFiAdapter adapter =
+            new CapyFiAdapter(address(executor), ICapyFiComptroller(EVAULT_FACTORY));
+        GrowYieldAdapterRegistry r = _forkRegistry();
+
+        IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
+            new IGrowYieldAdapterRegistry.VaultConfig[](1);
+        vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
+            address(adapter), CAPY_USDC, Protocol.CAPYFI, true, true
+        );
+
+        vm.expectRevert(IGrowYieldAdapterRegistry.RegistrarMismatch.selector);
+        r.addVaults(vaults);
+    }
+
+    function _forkRegistry() internal returns (GrowYieldAdapterRegistry) {
+        return new GrowYieldAdapterRegistry(
+            address(executor),
+            address(this),
+            IGrowYieldAdapterRegistry.Registrars({
+                aavePool: address(0),
+                aaveDataProvider: address(0),
+                morphoVaultFactory: address(0),
+                morphoAdapterFactory: address(0),
+                morphoEligibility: address(0),
+                eulerEVaultFactory: EVAULT_FACTORY,
+                eulerEarnFactory: EARN_FACTORY,
+                capyFiComptroller: CAPY_COMPTROLLER
+            })
         );
     }
 }
