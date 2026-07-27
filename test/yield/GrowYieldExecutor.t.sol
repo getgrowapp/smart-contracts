@@ -187,30 +187,24 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         executor.pauseVaultDeposits(makeAddr("typo"));
     }
 
-    /// @dev A false-positive pause must not be an unrecoverable state. The guardian protects
-    ///      unilaterally; only the registry owner may re-expose accounts to the venue.
-    function test_pauseIsReversibleByGovernanceOnly() public {
+    /// @dev A false-positive pause must not be an unrecoverable state. The guardian owns the
+    ///      whole pause lifecycle and can re-expose the venue itself.
+    function test_pauseIsReversibleByGuardianOnly() public {
         vm.prank(riskGuardian);
         executor.pauseVaultDeposits(aaveVault);
         assertTrue(executor.depositsPaused(aaveVault));
 
-        // The guardian can protect but cannot re-expose: un-pausing is `onlyOwner`.
-        vm.prank(riskGuardian);
-        vm.expectRevert(
-            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, riskGuardian)
-        );
+        // The owner has no authority over the pause state, in either direction.
+        vm.expectRevert(IGrowYieldExecutor.NotAuthorizedToPause.selector);
         executor.unpauseVaultDeposits(aaveVault);
 
-        address stranger = makeAddr("stranger");
-        vm.prank(stranger);
-        vm.expectRevert(
-            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger)
-        );
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(IGrowYieldExecutor.NotAuthorizedToPause.selector);
         executor.unpauseVaultDeposits(aaveVault);
 
-        // The owner (governance for this stack) can.
         vm.expectEmit(true, false, false, false, address(executor));
         emit IGrowYieldExecutor.VaultDepositsUnpaused(aaveVault);
+        vm.prank(riskGuardian);
         executor.unpauseVaultDeposits(aaveVault);
         assertFalse(executor.depositsPaused(aaveVault));
 
@@ -220,10 +214,11 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         assertEq(aavePool.aToken().balanceOf(account), 10e6, "deposits work again");
     }
 
-    /// @dev Governance can also pause directly, so protection does not depend on one hot key.
-    function test_registryOwnerCanAlsoPause() public {
+    /// @dev The two authorities are disjoint: admitting venues grants no power to pause.
+    function test_registryOwnerCannotPause() public {
+        vm.expectRevert(IGrowYieldExecutor.NotAuthorizedToPause.selector);
         executor.pauseVaultDeposits(aaveVault);
-        assertTrue(executor.depositsPaused(aaveVault));
+        assertFalse(executor.depositsPaused(aaveVault));
     }
 
     function test_execute_rejectsOverlongBatch() public {

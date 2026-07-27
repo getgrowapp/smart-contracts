@@ -24,9 +24,9 @@ import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 ///      `GrowYieldAdapterRegistry`. Permissionless by construction — an operation pulls the
 ///      source token from `msg.sender` and credits every output back to `msg.sender`.
 ///
-///      Two distinct authorities: the owner (`Ownable2Step`) admits venues and un-pauses; the
-///      immutable risk guardian can only pause deposits. Neither can move funds or block a
-///      redemption, and redemptions are never pausable.
+///      Two disjoint authorities: the owner (`Ownable2Step`) admits venues and nothing else; the
+///      immutable risk guardian owns the deposit-pause lifecycle and nothing else. Neither can
+///      move funds or block a redemption, and redemptions are never pausable.
 /// @custom:security-contact security@getgrowapp.co
 contract GrowYieldExecutor is
     GrowYieldAdapterRegistry,
@@ -49,11 +49,16 @@ contract GrowYieldExecutor is
     /// @inheritdoc IGrowYieldExecutor
     mapping(address vault => bool) public depositsPaused;
 
+    modifier onlyGuardian() {
+        if (msg.sender != riskGuardian) revert NotAuthorizedToPause();
+        _;
+    }
+
     /// @param maxLossBps_ Maximum shortfall from preview, in basis points; must be nonzero so
     ///        venue rounding against the preview cannot brick operations.
-    /// @param riskGuardian_ Address able to pause venue deposits; cannot un-pause, and must
-    ///        differ from `owner_`.
-    /// @param owner_ Address authorized to admit venues and un-pause; should be a Safe or
+    /// @param riskGuardian_ Sole address able to pause and un-pause venue deposits; must differ
+    ///        from `owner_` so the two authorities stay disjoint.
+    /// @param owner_ Address authorized to admit venues; should be a Safe or
     ///        TimelockController.
     /// @param registrars_ Canonical protocol registrars pinned for this contract's lifetime.
     constructor(
@@ -72,9 +77,7 @@ contract GrowYieldExecutor is
     }
 
     /// @inheritdoc IGrowYieldExecutor
-    function pauseVaultDeposits(address vault) external {
-        // Either authority may protect; only the owner may re-expose.
-        if (msg.sender != riskGuardian && msg.sender != owner()) revert NotAuthorizedToPause();
+    function pauseVaultDeposits(address vault) external onlyGuardian {
         // Reject a mistyped address instead of recording a pause that protects nothing.
         if (_venues[vault].adapter == address(0)) revert VenueNotAllowed();
 
@@ -85,7 +88,7 @@ contract GrowYieldExecutor is
     }
 
     /// @inheritdoc IGrowYieldExecutor
-    function unpauseVaultDeposits(address vault) external onlyOwner {
+    function unpauseVaultDeposits(address vault) external onlyGuardian {
         if (depositsPaused[vault]) {
             depositsPaused[vault] = false;
             emit VaultDepositsUnpaused(vault);
@@ -174,7 +177,8 @@ contract GrowYieldExecutor is
 
         // The adapter must consume exactly `sent`: too much left behind is a stranded residual,
         // too little is a donation swept from an unrelated balance. One wei either way is
-        // rebasing-token rounding.
+        // rebasing-token rounding. Absolute bounds are safe even for aTokens, whose normalized
+        // income accrues on read and is therefore constant within a transaction.
         uint256 sourceAfter = sourceToken.balanceOf(venue.adapter);
         if (
             sourceAfter + 1 < adapterSourceBefore || sourceAfter > adapterSourceBefore + 1

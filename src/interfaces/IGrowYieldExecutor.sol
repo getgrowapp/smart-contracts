@@ -89,30 +89,29 @@ interface IGrowYieldExecutor is IGrowYieldAdapterRegistry {
     /// @notice The amount mode or its associated amount is invalid for this operation.
     error InvalidAmountMode();
 
-    /// @notice The caller may neither pause nor unpause this venue's deposits.
+    /// @notice The caller is not the risk guardian.
     error NotAuthorizedToPause();
 
     /// @notice New deposits into this venue are paused.
     error DepositsPaused();
 
     /// @notice Disable new deposits into a venue, for every caller.
-    /// @dev Callable by the immutable risk guardian or by the registry owner, so the pause does
-    ///      not depend on one hot key. Redemptions remain available. The venue must already be
-    ///      admitted, so a mistyped address fails loudly rather than recording a pause that
-    ///      protects nothing. Pausing one venue never affects siblings.
+    /// @dev Risk guardian only; the registry owner cannot pause. Redemptions remain available.
+    ///      The venue must already be admitted, so a mistyped address fails loudly rather than
+    ///      recording a pause that protects nothing. Pausing one venue never affects siblings.
     /// @param vault Venue whose deposits are disabled.
     function pauseVaultDeposits(address vault) external;
 
     /// @notice Re-enable deposits into a paused venue.
-    /// @dev Registry owner only, deliberately not the guardian: protecting is unilateral,
-    ///      re-exposing accounts is a governance decision.
+    /// @dev Risk guardian only. The pause lifecycle belongs entirely to the guardian, disjoint
+    ///      from the owner's authority over the venue set.
     /// @param vault Venue whose deposits are re-enabled.
     function unpauseVaultDeposits(address vault) external;
 
     /// @notice Maximum accepted shortfall vs. adapter preview, in basis points.
     function maxLossBps() external view returns (uint16);
 
-    /// @notice Immutable address authorized to pause venue deposits.
+    /// @notice Immutable address authorized to pause and un-pause venue deposits.
     function riskGuardian() external view returns (address);
 
     /// @notice Whether new deposits into a venue are currently paused.
