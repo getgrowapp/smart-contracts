@@ -47,7 +47,7 @@ contract GrowYieldForkTest is Test {
         // The executor deploys its registry; both are immutable and name each other.
         executor = new GrowYieldExecutor(
             50,
-            address(this),
+            makeAddr("riskGuardian"),
             address(this),
             IGrowYieldAdapterRegistry.Registrars({
                 aavePool: provider.getPool(),

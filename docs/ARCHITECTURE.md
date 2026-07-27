@@ -189,24 +189,41 @@ max(
 The preview-relative check limits unexpected venue slippage. The absolute floor
 protects against a manipulated or compromised preview returning a misleading value.
 
-### Executor–registry binding
+### One contract: executor *is* the registry
 
-The executor has **no owner** and no per-account configuration. It deploys its own registry
-in its constructor, and the two name each other immutably:
+`GrowYieldExecutor` inherits `GrowYieldAdapterRegistry`. There is no second address, no
+pointer to keep in sync, no initializer window, and no way to express an executor aimed at a
+registry that does not name it back — that whole class of misconfiguration is gone because the
+two halves were never separable: every operation resolves a venue from this contract's own
+storage on the same call.
 
 ```solidity
-IGrowYieldAdapterRegistry public immutable registry;   // on the executor
-address public immutable executor;                     // on the registry
+abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry { … }
+
+contract GrowYieldExecutor is
+    GrowYieldAdapterRegistry, ReentrancyGuardTransient, IGrowYieldExecutor { … }
 ```
 
-Deploying the registry from the constructor is what makes the binding total. CREATE2 cannot
-resolve a mutual pin — each contract's init code would have to contain the other's address —
-so the alternatives are a settable slot or an initializer window. Creating the registry inline
-has neither: nothing about the pair is configurable after deployment.
+Adapters authorize `address(this)`, so an adapter is bound to exactly one deployment and a
+different executor cannot admit it. Deployment order is the obvious one: executor, then
+adapters pointing at it, then `addVaults`.
 
-Which venues exist is therefore a single governance decision, made once by the registry owner
-calling `addVaults`. There is no per-account registry selection and no per-account, per-venue
-enablement to keep in sync with it.
+Which venues exist is a single governance decision, made by the owner calling `addVaults`.
+There is no per-account registry selection and no per-account, per-venue enablement.
+
+#### Two authorities, required to be distinct
+
+| | Owner (`Ownable2Step`) | Risk guardian (immutable) |
+|---|---|---|
+| `addVaults` | yes | no |
+| `pauseVaultDeposits` | yes | yes |
+| `unpauseVaultDeposits` | yes | **no** |
+| Move funds, block a redemption | no | no |
+
+The constructor rejects `riskGuardian == owner`. One key that could both pause and un-pause
+would collapse the separation the reversible pause depends on: protecting is meant to be fast
+and unilateral, re-exposing accounts deliberate. Ownership transfer is two-step, so a mistyped
+handover cannot strand the contract.
 
 The executor is permissionless as a result: `execute` pulls the source token from `msg.sender`
 and credits every output back to `msg.sender`, so a caller can only ever move their own funds,
@@ -227,8 +244,8 @@ enrollment. The executor names the registry, the registry names the venues, and 
 nothing further to configure per venue.
 
 `setExecutor` is load-bearing well beyond routing: once set, a policy owner can sign a call to
-that address. So the module requires the candidate to prove it is a Grow executor bound to a
-registry that names it back — a property no arbitrary contract can fake without deploying the
+that address against the account's standing allowance. So the module requires the candidate to
+answer the — a property no arbitrary contract can fake without deploying the
 real pair. Otherwise an owner typo would become a session-key-exploitable drain.
 
 The paymaster is per-account for availability, not security: a single protocol-wide immutable
@@ -242,7 +259,7 @@ installs the module. Session keys and the Grow backend are excluded by construct
 
 Replacement is immediate and has no overlap: batches targeting the previous executor stop
 validating the moment `setExecutor` returns. Exit positions opened through an executor before
-replacing it. Since each executor is permanently bound to its own registry, this is also how
+replacing it. Since each executor carries its own venue set, this is also how
 an account moves to a new admitted venue set — for example one that supports a new protocol.
 
 An account with no approved executor validates nothing: `isAllowedCallData` returns false.
@@ -264,8 +281,8 @@ the revocation path.
 
 ### Risk guardian and the reversible pause
 
-The executor has one immutable `riskGuardian`. It, or the registry owner, can pause new
-deposits into a venue for every caller at once. Only the **registry owner** can un-pause.
+The contract has one immutable `riskGuardian`. It, or the owner, can pause new deposits into a
+venue for every caller at once. Only the **owner** can un-pause; it is an `onlyOwner` function.
 
 That split is the point: protecting is fast and unilateral, re-exposing accounts to a venue is
 a governance decision. Neither authority can move funds, admit a venue, or block redemptions, so
@@ -274,8 +291,8 @@ means protection does not depend on a single hot key, and letting it un-pause me
 false-positive pause is an ordinary operation rather than an unrecoverable state requiring a new
 deployment.
 
-The pause target must be a venue this executor's own registry admitted, so a mistyped address
-reverts `VenueNotAllowed` rather than recording a pause that protects nothing.
+The pause target must be a venue this contract admitted, so a mistyped address reverts
+`VenueNotAllowed` rather than recording a pause that protects nothing.
 
 Venues themselves are never delisted, deliberately. Removing an admitted venue would set
 `canRedeem` false for accounts already holding its position token and trap them; the reversible
@@ -446,8 +463,8 @@ swept into another account's redeem.
 
 | Change | What is required |
 |---|---|
-| New venue for an already-supported protocol | `addVaults` from the registry owner. The protocol's adapter already exists and serves every venue of that protocol, so nothing is redeployed and every account sees the venue immediately. |
-| New **protocol** | Deploy a new executor pinning the additional registrar (it deploys its own registry), deploy adapters for it, `addVaults` the full intended set, then each account switches with one owner-signed `policy.setExecutor`. The policy module and the old stack are untouched. |
+| New venue for an already-supported protocol | `addVaults` from the owner. The protocol's adapter already exists and serves every venue of that protocol, so nothing is redeployed and every account sees the venue immediately. |
+| New **protocol** | Deploy a new executor pinning the additional registrar, deploy adapters bound to it, `addVaults` the full intended set, then each account switches with one owner-signed `policy.setExecutor`. The policy module and the old deployment are untouched. |
 | Change to executor or policy-module logic | Full stack migration, as before: a new executor, new adapters pinned to it, a new registry, and a new policy-module install on each account. |
 
 Adapters pin their executor, so a new executor requires new adapter deployments; the registrars
@@ -457,11 +474,10 @@ venue set at once, which is the trade for having no per-account venue gate.
 ### Deployment procedure
 
 `script/Deploy.s.sol` drives `GrowYieldDeployer.deployStack` from `script/config/<env>.json`.
-One atomic transaction deploys the executor (which deploys its registry), the policy module,
-and every adapter; admits the configured vault set; and offers registry ownership to
-`.registry.owner`:
+One atomic transaction deploys the executor (which is the venue registry), the policy module,
+and every adapter; admits the configured vault set; and offers ownership to `.registry.owner`:
 
-1. The executor's init code names the shared deployer as its registry's initial owner.
+1. The executor's init code names the shared deployer as its initial owner.
 2. The deployer calls `addVaults` with the full configured set, then `transferOwnership`.
 3. Governance calls `acceptOwnership()` in a later transaction.
 

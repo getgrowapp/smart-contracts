@@ -7,7 +7,6 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {GrowYieldExecutor} from "../src/GrowYieldExecutor.sol";
 import {GrowYieldPolicyModule} from "../src/GrowYieldPolicyModule.sol";
-import {GrowYieldAdapterRegistry} from "../src/GrowYieldAdapterRegistry.sol";
 import {AaveV3Adapter} from "../src/adapters/AaveV3Adapter.sol";
 import {CapyFiAdapter} from "../src/adapters/CapyFiAdapter.sol";
 import {EulerEarnAdapter} from "../src/adapters/EulerEarnAdapter.sol";
@@ -81,8 +80,8 @@ contract Deploy is Script {
         // --- Executor init code + predicted address ---
         address riskGuardian = vm.parseJsonAddress(config, ".executor.riskGuardian");
         require(riskGuardian != CREATE2_FACTORY, "risk guardian is CREATE2 factory");
-        // The executor deploys its own registry, so the registrars and the registry's initial
-        // owner (this deployer, which hands over in the same transaction) are executor args.
+        // The executor is the venue registry, so the registrars and the initial owner (this
+        // deployer, which hands over in the same transaction) are its own constructor args.
         IGrowYieldAdapterRegistry.Registrars memory registrars = _registrars(config);
         params.executorInit = abi.encodePacked(
             type(GrowYieldExecutor).creationCode,

@@ -157,7 +157,7 @@ contract DeployTest is Test {
         returns (GrowYieldDeployer.StackParams memory params)
     {
         params.executorSalt = EXECUTOR_SALT;
-        // The executor deploys its own registry, naming the deployer as initial owner.
+        // The executor is the venue registry, naming the deployer as its initial owner.
         params.executorInit = abi.encodePacked(
             type(GrowYieldExecutor).creationCode,
             abi.encode(

@@ -234,8 +234,10 @@ abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterReg
         (bool ok, bytes memory returned) = adapter.staticcall(abi.encodeWithSelector(selector));
         if (!ok || returned.length != 32) revert RegistrarMismatch();
 
+        // Decoded as a word so dirty upper bits are rejected rather than silently masked.
         uint256 word = abi.decode(returned, (uint256));
         if (word > type(uint160).max) revert RegistrarMismatch();
+        // forge-lint: disable-next-line(unsafe-typecast)
         return address(uint160(word));
     }
 

@@ -107,7 +107,7 @@ abstract contract GrowYieldTestBase is Test {
         );
     }
 
-    /// @dev Deploys venue infrastructure, then the executor (which deploys its own registry),
+    /// @dev Deploys venue infrastructure, then the executor (which is also the venue registry),
     ///      then the adapters that authorize it, then admits the initial vault set.
     function _deployStack() internal {
         automationPk = uint256(keccak256("automation"));
@@ -156,8 +156,8 @@ abstract contract GrowYieldTestBase is Test {
     }
 
     /// @dev A fresh executor over the same mock venues, owned by `owner_` and holding its own
-    ///      empty venue set. Each executor is its own registry, so this is how a test obtains a
-    ///      second, independent venue set.
+    ///      empty venue set. Each executor carries its own venue set, so this is how a test
+    ///      obtains a second, independent one.
     function _deployExecutor(address owner_) internal returns (GrowYieldExecutor) {
         return new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian, owner_, _mockRegistrars());
     }

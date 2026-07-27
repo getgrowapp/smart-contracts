@@ -1,5 +1,12 @@
 # Change log
 
+> **Latest — one contract.** `GrowYieldExecutor` now inherits `GrowYieldAdapterRegistry`
+> (abstract); admission and execution are a single deployment. Removed: the executor's
+> `registry` immutable, the registry's `executor` immutable, the constructor-deploys-registry
+> hack, and the deployer's separate registry step. Adapters authorize `address(this)`.
+> `addVaults` and `unpauseVaultDeposits` are `onlyOwner`; `pauseVaultDeposits` accepts the owner
+> or the immutable guardian; the constructor rejects `riskGuardian == owner`.
+
 > **Latest — policy collapse, reversible pause, per-account sponsor.**
 >
 > - **The approve/execute/revoke bracket is gone.** Accounts hold a standing allowance to the

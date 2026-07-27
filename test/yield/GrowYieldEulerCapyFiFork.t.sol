@@ -61,7 +61,8 @@ contract GrowYieldEulerCapyFiForkTest is Test {
     /// @dev A new executor also means a new, empty registry: the two are deployed together and
     ///      permanently bound.
     function _freshExecutor() internal {
-        executor = new GrowYieldExecutor(50, address(this), address(this), _forkRegistrars());
+        executor =
+            new GrowYieldExecutor(50, makeAddr("riskGuardian"), address(this), _forkRegistrars());
     }
 
     function _depositRedeem(address vault, address position) internal {

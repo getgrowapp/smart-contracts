@@ -58,6 +58,9 @@ library GrowYieldPolicyLib {
             abi.decode(callData[4:], (address, uint256, bytes));
 
         return target == executor && target != account && value == 0 && data.length >= 4
+            // Truncation is the intent: the leading four bytes are the selector, and
+            // `data.length >= 4` above guarantees they exist.
+            // forge-lint: disable-next-line(unsafe-typecast)
             && bytes4(data) == IGrowYieldExecutor.execute.selector
             && keccak256(callData)
                 == keccak256(abi.encodeCall(IModularAccount.execute, (target, value, data)));

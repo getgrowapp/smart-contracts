@@ -102,8 +102,12 @@ contract GrowYieldAllAdaptersForkTest is Test {
         ForkMorphoEligibility eligibility = new ForkMorphoEligibility(child0);
 
         // The executor deploys its registry; both are immutable and name each other.
+        // Guardian and owner must be distinct addresses.
         executor = new GrowYieldExecutor(
-            50, address(this), address(this), _registrars(aaveProvider, address(eligibility))
+            50,
+            makeAddr("riskGuardian"),
+            address(this),
+            _registrars(aaveProvider, address(eligibility))
         );
 
         aave = new AaveV3Adapter(
