@@ -3,16 +3,13 @@ pragma solidity 0.8.36;
 
 /// @title IYieldAdapter
 /// @notice Uniform interface for protocol-specific yield operations, parameterized by venue.
-/// @dev One adapter serves every venue of a single protocol, so it holds no per-venue state:
-///      every method derives what it needs from `vault` on each call. `vault` is the venue
-///      identifier that protocol keys its own API by — the share-token contract for ERC-4626
-///      style venues (Euler EVault, Euler Earn, Morpho VaultV2 wrapper), the caToken for
-///      Compound-style markets (CapyFi), and the reserve's underlying asset for Aave V3, whose
-///      pool is shared across every reserve.
+/// @dev One adapter serves every venue of a single protocol and holds no per-venue state. `vault`
+///      is the identifier that protocol keys its own API by — the share token for ERC-4626 venues
+///      (Euler EVault, Euler Earn, Morpho VaultV2 wrapper), the caToken for Compound-style markets
+///      (CapyFi), and the reserve's underlying for Aave V3.
 ///
-///      Adapters answer only "how do I transact with this venue" and "is it a genuine venue of
-///      my protocol". Which venues Grow permits, and the `(asset, positionToken)` pair pinned
-///      for each, live in the registry.
+///      Adapters answer only "how do I transact with this venue" and "is it genuine". Which venues
+///      Grow permits, and each pinned `(asset, positionToken)` pair, live in the registry.
 interface IYieldAdapter {
     /// @notice Executor authorized to call state-changing adapter methods.
     function executor() external view returns (address);

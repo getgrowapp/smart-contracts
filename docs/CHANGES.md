@@ -1,5 +1,31 @@
 # Change log
 
+> **Latest — one contract.** `GrowYieldExecutor` now inherits `GrowYieldAdapterRegistry`
+> (abstract); admission and execution are a single deployment. Removed: the executor's
+> `registry` immutable, the registry's `executor` immutable, the constructor-deploys-registry
+> hack, and the deployer's separate registry step. Adapters authorize `address(this)`.
+> `addVaults` and `unpauseVaultDeposits` are `onlyOwner`; `pauseVaultDeposits` accepts the owner
+> or the immutable guardian; the constructor rejects `riskGuardian == owner`.
+
+> **Latest — policy collapse, reversible pause, per-account sponsor.**
+>
+> - **The approve/execute/revoke bracket is gone.** Accounts hold a standing allowance to the
+>   executor, which is not exploitable because `execute` only ever pulls from and pays to
+>   `msg.sender`. `GrowYieldPolicyLib` accepts one shape —
+>   `account.execute(executor, 0, executor.execute(ops))` — and no longer decodes operations,
+>   which ERC-7562 prevents it from validating usefully anyway. The Grow entity now installs
+>   for the `execute` selector, not `executeBatch`.
+> - **`setExecutor` now proves its argument is a bound Grow executor.** It previously accepted
+>   any address with code, which turned an owner typo into a session-key-exploitable drain.
+> - **The deposit pause is reversible.** Risk guardian or registry owner may pause; only the
+>   registry owner may un-pause. Venues are still never delisted — that would trap holders.
+> - **The sponsoring paymaster is per-account and account-settable**, so retiring a sponsor is
+>   one signature per account rather than a module reinstall everywhere.
+> - **`MAX_OPS` lives on the executor** and is enforced there; the policy derives its calldata
+>   ceiling from it. Residual accounting moved to the executor's two-sided check on the
+>   registry-pinned token, so `AaveV3Adapter` no longer re-derives an aToken that goes stale
+>   exactly when a reserve is re-pointed. `Venue` carries the adapter code hash.
+
 > **Superseding change — executor/registry coupling + policy simplification.**
 > Sections 1–N below describe the *previous* refactor. Two of its decisions have since been
 > reversed for simplicity:

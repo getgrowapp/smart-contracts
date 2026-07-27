@@ -36,14 +36,14 @@ contract GrowYieldHalmosTest is GrowYieldTestBase {
     /// @custom:halmos --solver-timeout-assertion 0
     function check_shortOrGarbageSignature_returnsInvalid(bytes memory junk) public {
         if (junk.length == 71) return;
-        PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        PackedUserOperation memory userOp = _baseUserOp(_policyCall(_depositOps()));
         userOp.signature = junk;
         _assertInvalid(userOp, bytes32(uint256(1)));
     }
 
     /// @custom:halmos --solver-timeout-assertion 0
     function check_wrongOuterHash_returnsInvalid(bytes32 wrongHash) public {
-        PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        PackedUserOperation memory userOp = _baseUserOp(_policyCall(_depositOps()));
         bytes32 userOpHash = keccak256("authorized");
         if (wrongHash == userOpHash) return;
         userOp = _authorize(userOp, userOpHash);
@@ -53,7 +53,7 @@ contract GrowYieldHalmosTest is GrowYieldTestBase {
     /// @custom:halmos --solver-timeout-assertion 0
     function check_nonAccountCaller_neverValidates(address caller) public {
         if (caller == account) return;
-        PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        PackedUserOperation memory userOp = _baseUserOp(_policyCall(_depositOps()));
         bytes32 userOpHash = keccak256("authorized");
         userOp = _authorize(userOp, userOpHash);
 

@@ -21,7 +21,7 @@ contract GrowYieldHandler is Test {
     address public immutable underlying;
     address public immutable aToken;
 
-    /// @dev Venues, not adapters: the executor resolves the adapter from the registry.
+    /// @dev Venues, not adapters: the executor resolves the adapter from the executor.
     address public immutable aaveVault;
     address public immutable morphoVault;
 
@@ -183,21 +183,19 @@ contract GrowYieldInvariants is GrowYieldTestBase {
         assertGt(value, 0);
     }
 
-    /// @dev No operation path admits a vault, edits an admitted entry, or unbinds the executor
-    ///      from its registry: admission requires the registry owner, and the binding is
-    ///      immutable.
-    function invariant_registryEntriesAndBindingAreStable() public view {
-        assertEq(address(executor.registry()), address(registry));
-        assertEq(registry.executor(), address(executor));
-        assertEq(registry.vaultCount(), 3);
+    /// @dev No operation path admits a vault or edits an admitted entry: admission is
+    ///      `onlyOwner` on the very contract the operations run through.
+    function invariant_admittedVenuesAreStable() public view {
+        assertEq(executor.owner(), address(this));
+        assertEq(executor.vaultCount(), 3);
 
         address[3] memory expected = [aaveVault, aaveVaultOther, morphoVault];
         for (uint256 i; i < expected.length; ++i) {
-            Venue memory admitted = registry.venue(expected[i]);
-            assertEq(registry.vaultAt(i), expected[i]);
+            Venue memory admitted = executor.venue(expected[i]);
+            assertEq(executor.vaultAt(i), expected[i]);
             assertTrue(admitted.canDeposit);
             assertTrue(admitted.canRedeem);
-            assertEq(registry.adapterCodeHash(admitted.adapter), admitted.adapter.codehash);
+            assertEq(executor.adapterCodeHash(admitted.adapter), admitted.adapter.codehash);
             assertEq(
                 admitted.positionToken,
                 IYieldAdapter(admitted.adapter).positionToken(expected[i]),

@@ -108,7 +108,7 @@ contract GrowYieldAdaptersTest is GrowYieldTestBase {
         ];
 
         for (uint256 i; i < vaults.length; ++i) {
-            assertEq(registry.venue(vaults[i]).adapter, address(aaveAdapter), "shared adapter");
+            assertEq(executor.venue(vaults[i]).adapter, address(aaveAdapter), "shared adapter");
 
             MockUnderlying(vaults[i]).mint(account, 100e6);
             vm.prank(account);

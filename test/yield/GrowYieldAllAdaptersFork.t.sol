@@ -82,7 +82,6 @@ contract GrowYieldAllAdaptersForkTest is Test {
     EulerEVaultAdapter internal evault;
     EulerEarnAdapter internal earn;
     CapyFiAdapter internal capy;
-    GrowYieldAdapterRegistry internal registry;
     address internal account;
 
     address[5] internal adapters;
@@ -103,10 +102,13 @@ contract GrowYieldAllAdaptersForkTest is Test {
         ForkMorphoEligibility eligibility = new ForkMorphoEligibility(child0);
 
         // The executor deploys its registry; both are immutable and name each other.
+        // Guardian and owner must be distinct addresses.
         executor = new GrowYieldExecutor(
-            50, address(this), address(this), _registrars(aaveProvider, address(eligibility))
+            50,
+            makeAddr("riskGuardian"),
+            address(this),
+            _registrars(aaveProvider, address(eligibility))
         );
-        registry = GrowYieldAdapterRegistry(address(executor.registry()));
 
         aave = new AaveV3Adapter(
             IAaveV3Pool(aaveProvider.getPool()),
@@ -138,12 +140,12 @@ contract GrowYieldAllAdaptersForkTest is Test {
                 canRedeem: true
             });
         }
-        registry.addVaults(configs);
+        executor.addVaults(configs);
 
         // Admission is the whole enablement: the account only approves its tokens.
         vm.startPrank(account);
         for (uint256 i; i < 5; ++i) {
-            IERC20(registry.venue(vaults[i]).positionToken)
+            IERC20(executor.venue(vaults[i]).positionToken)
                 .approve(address(executor), type(uint256).max);
         }
         IERC20(USDC).approve(address(executor), type(uint256).max);
@@ -227,7 +229,7 @@ contract GrowYieldAllAdaptersForkTest is Test {
     }
 
     function _position(address vault) internal view returns (address) {
-        return registry.venue(vault).positionToken;
+        return executor.venue(vault).positionToken;
     }
 
     function _rebalance(address from, address to) internal {

@@ -55,7 +55,7 @@ contract DeployTest is Test {
         address adapterAddr = params.vaults[0].adapter;
         address vaultAddr = params.vaults[0].vault;
 
-        (address executor, address policyModule, address[] memory adapters, address registry) =
+        (address executor, address policyModule, address[] memory adapters) =
             deployer.deployStack(params);
 
         // Addresses land exactly where predicted.
@@ -65,15 +65,13 @@ contract DeployTest is Test {
 
         // Every component pinned the same executor, which itself is ownerless.
         assertEq(GrowYieldExecutor(executor).riskGuardian(), RISK_GUARDIAN, "risk guardian");
-        // The module pins no executor: each account approves one at install time.
+        // The module pins neither executor nor paymaster: both are per-account install data.
         assertEq(GrowYieldPolicyModule(policyModule).accountExecutor(address(this)), address(0));
+        assertEq(GrowYieldPolicyModule(policyModule).accountPaymaster(address(this)), address(0));
         assertEq(IYieldAdapter(adapters[0]).executor(), executor, "adapter executor");
 
-        // The executor deployed this registry and the two are permanently bound.
-        assertEq(address(GrowYieldExecutor(executor).registry()), registry, "executor registry");
-
-        GrowYieldAdapterRegistry r = GrowYieldAdapterRegistry(registry);
-        assertEq(r.executor(), executor, "registry executor");
+        // Admission and execution are one contract; there is no second address to check.
+        GrowYieldExecutor r = GrowYieldExecutor(executor);
         assertEq(r.vaultCount(), 1, "vault count");
         assertEq(r.vaultAt(0), vaultAddr, "vault order");
         assertEq(r.adapterCodeHash(adapterAddr), adapterAddr.codehash, "adapter code hash");
@@ -87,17 +85,19 @@ contract DeployTest is Test {
         assertTrue(r.vaultProtocol(vaultAddr) == Protocol.AAVE, "vault protocol");
 
         // Ownership is offered, not transferred: governance must accept it.
-        assertEq(r.owner(), address(deployer), "registry owner");
-        assertEq(r.pendingOwner(), governance, "registry pending owner");
-        assertNotEq(r.owner(), CREATE2_FACTORY, "CREATE2 factory owns registry");
+        assertEq(r.owner(), address(deployer), "owner");
+        assertEq(r.pendingOwner(), governance, "pending owner");
+        assertNotEq(r.owner(), CREATE2_FACTORY, "CREATE2 factory owns the stack");
+        // The two authorities must be distinct addresses.
+        assertNotEq(r.riskGuardian(), r.owner(), "guardian separated from owner");
     }
 
     /// @dev After handover only governance admits vaults; the deployer has no path back in
     ///      because CREATE2 cannot reproduce the occupied stack addresses.
     function test_deployStack_deployerCannotAdmitVaultsAfterHandover() public {
         GrowYieldDeployer.StackParams memory params = _params(governance);
-        (address executor,,, address registry) = deployer.deployStack(params);
-        GrowYieldAdapterRegistry r = GrowYieldAdapterRegistry(registry);
+        (address executor,,) = deployer.deployStack(params);
+        GrowYieldExecutor r = GrowYieldExecutor(executor);
 
         vm.prank(governance);
         r.acceptOwnership();
@@ -157,7 +157,7 @@ contract DeployTest is Test {
         returns (GrowYieldDeployer.StackParams memory params)
     {
         params.executorSalt = EXECUTOR_SALT;
-        // The executor deploys its own registry, naming the deployer as initial owner.
+        // The executor is the venue registry, naming the deployer as its initial owner.
         params.executorInit = abi.encodePacked(
             type(GrowYieldExecutor).creationCode,
             abi.encode(
@@ -178,12 +178,10 @@ contract DeployTest is Test {
         );
         address executorAddr = _predict(params.executorSalt, params.executorInit);
 
-        // requiredPaymaster only needs code; this test contract suffices.
         params.policySalt = POLICY_SALT;
         params.policyInit = abi.encodePacked(
             type(GrowYieldPolicyModule).creationCode,
             abi.encode(
-                address(this),
                 uint128(500_000),
                 uint128(2_000_000),
                 uint256(150_000),

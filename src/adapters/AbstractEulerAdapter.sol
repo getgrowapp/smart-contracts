@@ -11,10 +11,8 @@ import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 /// @notice Shared ERC-4626 deposit/redeem path for every Euler EVK or Euler Earn vault of one
 ///         factory.
 /// @dev `vault` is the ERC-4626 vault, which is also its own position token. Subclasses supply
-///      only the protocol-specific authenticity check (factory membership); Grow risk approval is
-///      registry admission, and the venue's underlying is pinned by the registry and re-verified
-///      by the executor. The adapter retains no shares or assets — outputs credit `receiver`
-///      directly.
+///      only the factory-membership check; Grow risk approval is registry admission, which also
+///      pins the underlying. The adapter retains no shares or assets.
 /// @custom:security-contact security@getgrowapp.co
 abstract contract AbstractEulerAdapter is IYieldAdapter {
     using SafeERC20 for IERC20;
@@ -104,18 +102,16 @@ abstract contract AbstractEulerAdapter is IYieldAdapter {
         _assertCanonical(vault);
 
         address underlying = IERC4626(vault).asset();
-        // Shares are held only because the executor transferred the attributed amount
-        // here; `redeem(..., receiver, address(this))` sends underlying to `receiver`.
         uint256 sharesBefore = IERC20(vault).balanceOf(address(this));
         uint256 assetBefore = IERC20(underlying).balanceOf(address(this));
         uint256 assetsOut = IERC4626(vault).redeem(shares, receiver, address(this));
 
-        // Consume exactly the caller-attributed share amount. Pre-existing donations
-        // are deliberately not swept into an unrelated account's redemption.
+        // Consume exactly the caller-attributed shares; donations are not swept into an
+        // unrelated account's redemption.
         if (IERC20(vault).balanceOf(address(this)) != sharesBefore - shares) {
             revert ResidualBalance();
         }
-        // Underlying must go to `receiver`; adapter must not retain the redeem output.
+        // Underlying must go to `receiver`.
         if (IERC20(underlying).balanceOf(address(this)) != assetBefore) {
             revert ResidualBalance();
         }

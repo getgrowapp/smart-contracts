@@ -42,7 +42,6 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
     uint16 internal constant MAX_LOSS_BPS = 50;
 
     GrowYieldExecutor internal executor;
-    GrowYieldAdapterRegistry internal registry;
 
     MockUnderlying internal underlying;
     MockUnderlying internal otherUnderlying;
@@ -95,7 +94,6 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
                 capyFiComptroller: address(capyMarket.comptroller())
             })
         );
-        registry = GrowYieldAdapterRegistry(address(executor.registry()));
 
         evaultAdapter =
             new EulerEVaultAdapter(IEulerEVaultFactory(address(evkFactory)), address(executor));
@@ -121,7 +119,7 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
         vaults[2] = IGrowYieldAdapterRegistry.VaultConfig(
             address(capyAdapter), capyVault, Protocol.CAPYFI, true, true
         );
-        registry.addVaults(vaults);
+        executor.addVaults(vaults);
     }
 
     function _approveMax(address token) internal {
@@ -134,7 +132,7 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
         view
         returns (Operation memory)
     {
-        Venue memory venue = registry.venue(vault);
+        Venue memory venue = executor.venue(vault);
         address sourceToken = kind == OperationKind.DEPOSIT ? venue.asset : venue.positionToken;
         AmountMode amountMode =
             amount == type(uint256).max ? AmountMode.FULL_BALANCE : AmountMode.EXACT;
@@ -454,12 +452,12 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
     }
 
     function test_registry_enumeratesEulerAndCapyVenues() public view {
-        assertEq(registry.vaultCount(), 3);
-        assertEq(registry.vaultAt(0), evaultVault);
-        assertEq(registry.vaultAt(1), earnVaultAddr);
-        assertEq(registry.vaultAt(2), capyVault);
-        assertEq(registry.adapterCodeHash(address(evaultAdapter)), address(evaultAdapter).codehash);
-        assertEq(registry.adapterCodeHash(address(earnAdapter)), address(earnAdapter).codehash);
-        assertEq(registry.adapterCodeHash(address(capyAdapter)), address(capyAdapter).codehash);
+        assertEq(executor.vaultCount(), 3);
+        assertEq(executor.vaultAt(0), evaultVault);
+        assertEq(executor.vaultAt(1), earnVaultAddr);
+        assertEq(executor.vaultAt(2), capyVault);
+        assertEq(executor.adapterCodeHash(address(evaultAdapter)), address(evaultAdapter).codehash);
+        assertEq(executor.adapterCodeHash(address(earnAdapter)), address(earnAdapter).codehash);
+        assertEq(executor.adapterCodeHash(address(capyAdapter)), address(capyAdapter).codehash);
     }
 }

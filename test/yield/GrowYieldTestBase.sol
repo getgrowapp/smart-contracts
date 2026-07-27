@@ -62,7 +62,6 @@ abstract contract GrowYieldTestBase is Test {
     uint128 internal constant MAX_FEE = 2 gwei;
     uint32 internal constant POLICY_ENTITY_ID = 1;
 
-    GrowYieldAdapterRegistry internal registry;
     GrowYieldExecutor internal executor;
     GrowYieldPolicyModule internal policyModule;
     address internal sponsorPaymaster;
@@ -103,10 +102,12 @@ abstract contract GrowYieldTestBase is Test {
         address[] memory initialOwners = new address[](1);
         initialOwners[0] = automation;
         vm.prank(account);
-        policyModule.onInstall(abi.encode(POLICY_ENTITY_ID, initialOwners, address(executor)));
+        policyModule.onInstall(
+            abi.encode(POLICY_ENTITY_ID, initialOwners, address(executor), sponsorPaymaster)
+        );
     }
 
-    /// @dev Deploys venue infrastructure, then the executor (which deploys its own registry),
+    /// @dev Deploys venue infrastructure, then the executor (which is also the venue registry),
     ///      then the adapters that authorize it, then admits the initial vault set.
     function _deployStack() internal {
         automationPk = uint256(keccak256("automation"));
@@ -119,14 +120,13 @@ abstract contract GrowYieldTestBase is Test {
         _deployAaveVenues();
         _deployMorphoVenues();
 
+        // Admission and execution are one contract: deploy it, deploy adapters that authorize
+        // it, then admit the venues.
         executor = _deployExecutor(address(this));
-        registry = GrowYieldAdapterRegistry(address(executor.registry()));
-
         _deployAdapters();
-        registry.addVaults(_defaultVaults());
+        executor.addVaults(_defaultVaults());
 
         policyModule = new GrowYieldPolicyModule(
-            sponsorPaymaster,
             MAX_VERIFICATION_GAS,
             MAX_CALL_GAS,
             MAX_PRE_VERIFICATION_GAS,
@@ -155,9 +155,9 @@ abstract contract GrowYieldTestBase is Test {
         );
     }
 
-    /// @dev A fresh executor over the same mock venues, with its own registry owned by `owner_`.
-    ///      Each executor is permanently bound to the registry it deploys, so this is how a test
-    ///      obtains a second, independent venue set.
+    /// @dev A fresh executor over the same mock venues, owned by `owner_` and holding its own
+    ///      empty venue set. Each executor carries its own venue set, so this is how a test
+    ///      obtains a second, independent one.
     function _deployExecutor(address owner_) internal returns (GrowYieldExecutor) {
         return new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian, owner_, _mockRegistrars());
     }
@@ -202,14 +202,30 @@ abstract contract GrowYieldTestBase is Test {
         );
     }
 
-    /// @dev Admits one more Aave venue on the default registry, reusing the same adapter.
+    /// @dev Admits the default Aave venue into `target`, deploying an adapter bound to it.
+    ///      Adapters authorize exactly one executor, so a second executor needs its own.
+    function _admitAaveVaultOn(GrowYieldExecutor target) internal {
+        AaveV3Adapter adapter = new AaveV3Adapter(
+            IAaveV3Pool(address(aavePool)),
+            IAaveProtocolDataProvider(address(aaveDataProvider)),
+            address(target)
+        );
+        IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
+            new IGrowYieldAdapterRegistry.VaultConfig[](1);
+        vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
+            address(adapter), aaveVault, Protocol.AAVE, true, true
+        );
+        target.addVaults(vaults);
+    }
+
+    /// @dev Admits one more Aave venue on the default executor, reusing the same adapter.
     function _admitAaveVault(address vault) internal {
         IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
             new IGrowYieldAdapterRegistry.VaultConfig[](1);
         vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
             address(aaveAdapter), vault, Protocol.AAVE, true, true
         );
-        registry.addVaults(vaults);
+        executor.addVaults(vaults);
     }
 
     /// @dev Adds an extra Aave reserve served by the same pool, provider, and adapter.
@@ -242,12 +258,12 @@ abstract contract GrowYieldTestBase is Test {
     /// @dev The venue's source token for `kind`, taken from the registry's admitted pair
     ///      exactly as the executor does.
     function _sourceToken(address vault, OperationKind kind) internal view returns (address) {
-        Venue memory v = registry.venue(vault);
+        Venue memory v = executor.venue(vault);
         return kind == OperationKind.DEPOSIT ? v.asset : v.positionToken;
     }
 
     function _outputToken(address vault, OperationKind kind) internal view returns (address) {
-        Venue memory v = registry.venue(vault);
+        Venue memory v = executor.venue(vault);
         return kind == OperationKind.DEPOSIT ? v.positionToken : v.asset;
     }
 
@@ -313,28 +329,16 @@ abstract contract GrowYieldTestBase is Test {
             abi.encodeWithSelector(bytes4(keccak256("approve(address,uint256)")), spender, amount);
     }
 
-    /// @dev Canonical policy batch: approve-max, execute, then approve-zero per source token.
-    function _batch(address[] memory tokens, Operation[] memory ops)
-        internal
-        view
-        returns (bytes memory)
-    {
-        uint256 count = tokens.length;
-        Call[] memory calls = new Call[](2 * count + 1);
-
-        for (uint256 i; i < count; ++i) {
-            calls[i] = Call(tokens[i], 0, _approve(address(executor), type(uint256).max));
-            calls[count + 1 + i] = Call(tokens[i], 0, _approve(address(executor), 0));
-        }
-        calls[count] = Call(address(executor), 0, _executeData(ops));
-
-        return abi.encodeCall(IModularAccount.executeBatch, (calls));
+    /// @dev The one calldata shape the policy accepts: a single `execute` on the account
+    ///      forwarding to the executor. Allowances are standing and granted by the owner.
+    function _policyCall(Operation[] memory ops) internal view returns (bytes memory) {
+        return abi.encodeCall(IModularAccount.execute, (address(executor), 0, _executeData(ops)));
     }
 
-    function _batch1(address token, Operation[] memory ops) internal view returns (bytes memory) {
-        address[] memory tokens = new address[](1);
-        tokens[0] = token;
-        return _batch(tokens, ops);
+    /// @dev Standing allowance from `account` to the executor, as the owner would grant once.
+    function _approveExecutor(address token) internal {
+        vm.prank(account);
+        IERC20(token).approve(address(executor), type(uint256).max);
     }
 
     function _baseUserOp(bytes memory callData)

@@ -45,7 +45,7 @@ flowchart LR
     EP --> Account
     Account -->|validateUserOp| Policy
     Policy --> PolicyLib
-    Account -->|executeBatch| Executor
+    Account -->|execute| Executor
     Executor -->|account-selected| Registry
     Registry -->|venue authenticity at admission| Registrars
     Executor --> Aave
@@ -68,7 +68,7 @@ The layers are deliberately separate:
 |---|---|
 | Alchemy account | Selects the installed validation entity and applies selector scope |
 | Policy module | Authenticates an account-scoped policy owner and constrains UserOp fields |
-| Policy library | Accepts only one canonical approve/execute/revoke batch shape |
+| Policy library | Accepts only one canonical shape: a single forwarded `executor.execute` call |
 | Executor | Resolves the account's registry, pins recipients and amounts, checks output floors, budgets, and pauses |
 | Registry | Admits factory-authenticated venues and fixes their directions, token pairs, and runtime code hashes |
 | Adapters | Translate the uniform executor API into venue-specific calls and drift checks |
@@ -107,22 +107,35 @@ normal owner-authorized path. The Grow policy cannot call either function.
 
 ### `GrowYieldPolicyLib`
 
-The library accepts exactly this `executeBatch` shape:
+The library accepts exactly one shape and nothing else:
 
 ```text
-approve(sourceToken[0], executor, uint256.max)
-...
-approve(sourceToken[n], executor, uint256.max)
-executor.execute(Operation[])
-approve(sourceToken[0], executor, 0)
-...
-approve(sourceToken[n], executor, 0)
+account.execute(executor, 0, executor.execute(Operation[]))
 ```
 
-Source tokens are the unique operation source tokens in first-appearance order. The
-library rejects noncanonical ABI, native value, self-calls, extra bytes, more than
-four operations, zero adapters/tokens, and any operation without an absolute output
-floor. The executor independently re-derives each token from the adapter.
+That is the whole policy. It is short because the executor, not the calldata around it, is
+what makes the operations safe: `execute` pulls the source token from `msg.sender` and credits
+every output back to `msg.sender`, so reaching it can only move the caller's own funds, into or
+out of a venue the registry admitted.
+
+Accounts therefore hold a **standing allowance** to the executor, granted once by the owner.
+There is no approve/revoke bracket, because a standing allowance here is not exploitable: for
+funds to leave account A, A must itself be `msg.sender` on `execute`, which already requires a
+signature. An earlier design wrapped every batch in `approve(max) … approve(0)` to avoid the
+allowance; that bought defense-in-depth against a hypothetical executor bug and cost a bespoke
+calldata parser to police.
+
+The library also does not decode or vet the operations, and could not usefully do so: ERC-7562
+confines validation to account-associated storage, so it cannot read the registry, and every
+check it could make locally — nonzero vault, nonzero source token, nonzero output floor, batch
+size — the executor enforces on the same calldata moments later. Duplicating them would add a
+second place for the invariant to drift.
+
+What it does enforce: the target is the account's approved executor, no ether moves, the inner
+selector is `execute`, and `callData` is byte-for-byte the canonical encoding of what was
+inspected, so nothing can be padded onto a validated request at the sponsor's expense. Batch
+size is capped by a calldata ceiling derived from the executor's own `MAX_OPS`, which is the
+single source of truth for that bound.
 
 ### `GrowYieldExecutor`
 
@@ -130,12 +143,12 @@ Every operation is signed as the following static tuple:
 
 ```solidity
 struct Operation {
-    IYieldAdapter adapter;
+    address vault;            // the venue, as its protocol keys it
     OperationKind kind;       // DEPOSIT or REDEEM
     address sourceToken;
     uint256 amount;
     AmountMode amountMode;    // EXACT, FULL_BALANCE, PREVIOUS_OUTPUT
-    uint256 minAmountOut;     // absolute signed floor
+    uint256 minAmountOut;     // absolute floor, signed by whoever authorized the operation
 }
 ```
 
@@ -176,24 +189,41 @@ max(
 The preview-relative check limits unexpected venue slippage. The absolute floor
 protects against a manipulated or compromised preview returning a misleading value.
 
-### Executor–registry binding
+### One contract: executor *is* the registry
 
-The executor has **no owner** and no per-account configuration. It deploys its own registry
-in its constructor, and the two name each other immutably:
+`GrowYieldExecutor` inherits `GrowYieldAdapterRegistry`. There is no second address, no
+pointer to keep in sync, no initializer window, and no way to express an executor aimed at a
+registry that does not name it back — that whole class of misconfiguration is gone because the
+two halves were never separable: every operation resolves a venue from this contract's own
+storage on the same call.
 
 ```solidity
-IGrowYieldAdapterRegistry public immutable registry;   // on the executor
-address public immutable executor;                     // on the registry
+abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry { … }
+
+contract GrowYieldExecutor is
+    GrowYieldAdapterRegistry, ReentrancyGuardTransient, IGrowYieldExecutor { … }
 ```
 
-Deploying the registry from the constructor is what makes the binding total. CREATE2 cannot
-resolve a mutual pin — each contract's init code would have to contain the other's address —
-so the alternatives are a settable slot or an initializer window. Creating the registry inline
-has neither: nothing about the pair is configurable after deployment.
+Adapters authorize `address(this)`, so an adapter is bound to exactly one deployment and a
+different executor cannot admit it. Deployment order is the obvious one: executor, then
+adapters pointing at it, then `addVaults`.
 
-Which venues exist is therefore a single governance decision, made once by the registry owner
-calling `addVaults`. There is no per-account registry selection and no per-account, per-venue
-enablement to keep in sync with it.
+Which venues exist is a single governance decision, made by the owner calling `addVaults`.
+There is no per-account registry selection and no per-account, per-venue enablement.
+
+#### Two authorities, required to be distinct
+
+| | Owner (`Ownable2Step`) | Risk guardian (immutable) |
+|---|---|---|
+| `addVaults` | yes | no |
+| `pauseVaultDeposits` | yes | yes |
+| `unpauseVaultDeposits` | yes | **no** |
+| Move funds, block a redemption | no | no |
+
+The constructor rejects `riskGuardian == owner`. One key that could both pause and un-pause
+would collapse the separation the reversible pause depends on: protecting is meant to be fast
+and unilateral, re-exposing accounts deliberate. Ownership transfer is two-step, so a mistyped
+handover cannot strand the contract.
 
 The executor is permissionless as a result: `execute` pulls the source token from `msg.sender`
 and credits every output back to `msg.sender`, so a caller can only ever move their own funds,
@@ -201,27 +231,35 @@ and only into or out of an admitted venue. Nothing is gained by calling it as an
 
 ### The account's opt-in
 
-An account approves exactly one executor, and it does so on the **policy module**, not on the
-executor:
+An account approves exactly one executor and one sponsoring paymaster, and it does so on the
+**policy module**, not on the executor:
 
 ```solidity
-function setExecutor(address executor) external;               // keyed by msg.sender
-function accountExecutor(address account) external view returns (address);
+function setExecutor(address executor) external;    // keyed by msg.sender
+function setPaymaster(address paymaster) external;  // keyed by msg.sender
 ```
 
-`onInstall(abi.encode(entityId, policyOwners, executor))` is the account's whole enrollment —
-one owner-signed transaction. The executor names the registry, the registry names the venues,
-and there is nothing further to configure.
+`onInstall(abi.encode(entityId, policyOwners, executor, paymaster))` is the account's whole
+enrollment. The executor names the registry, the registry names the venues, and there is
+nothing further to configure per venue.
 
-Because `GrowYieldPolicyLib` accepts exactly one batch shape and that shape contains nothing
-but `approve` / `executor.execute` / `approve`, **no policy-owner signature can ever produce a
-`setExecutor` call**. Replacing the executor requires the account's own owner-authorized
-validation path — the same path that installs the module. Session keys and the Grow backend
-are excluded by construction.
+`setExecutor` is load-bearing well beyond routing: once set, a policy owner can sign a call to
+that address against the account's standing allowance. So the module requires the candidate to
+answer the — a property no arbitrary contract can fake without deploying the
+real pair. Otherwise an owner typo would become a session-key-exploitable drain.
+
+The paymaster is per-account for availability, not security: a single protocol-wide immutable
+sponsor would halt every account's automation the day it is retired or depleted, recoverable
+only by reinstalling the module everywhere. Per-account, rotation is one owner signature.
+
+Because `GrowYieldPolicyLib` accepts exactly one calldata shape and that shape is a single call
+to the executor, **no policy-owner signature can ever produce a `setExecutor` or `setPaymaster`
+call**. Both require the account's own owner-authorized validation path — the same path that
+installs the module. Session keys and the Grow backend are excluded by construction.
 
 Replacement is immediate and has no overlap: batches targeting the previous executor stop
 validating the moment `setExecutor` returns. Exit positions opened through an executor before
-replacing it. Since each executor is permanently bound to its own registry, this is also how
+replacing it. Since each executor carries its own venue set, this is also how
 an account moves to a new admitted venue set — for example one that supports a new protocol.
 
 An account with no approved executor validates nothing: `isAllowedCallData` returns false.
@@ -241,16 +279,24 @@ deposit → redeem → deposit and lose up to `maxLossBps` per hop on sponsor-pa
 guardian's deposit pause is the only volume-side control, and owner-signed `removeOwner` is
 the revocation path.
 
-### Risk guardian
+### Risk guardian and the reversible pause
 
-The executor has one immutable `riskGuardian`. It can permanently pause new deposits
-through an adapter, for every account and every registry at once. It cannot unpause, move
-funds, change limits, admit an adapter, or block redemptions. This adds incident-response
-value without giving the guardian a withdrawal or migration power. Recovery from a false
-pause requires a new deployment and owner-approved migration.
+The contract has one immutable `riskGuardian`. It, or the owner, can pause new deposits into a
+venue for every caller at once. Only the **owner** can un-pause; it is an `onlyOwner` function.
 
-The pause target must be a venue this executor's own registry admitted, so a mistyped address
-reverts `VenueNotAllowed` rather than recording a pause that protects nothing.
+That split is the point: protecting is fast and unilateral, re-exposing accounts to a venue is
+a governance decision. Neither authority can move funds, admit a venue, or block redemptions, so
+a paused venue is one nobody can enter and everybody can leave. Letting governance pause as well
+means protection does not depend on a single hot key, and letting it un-pause means a
+false-positive pause is an ordinary operation rather than an unrecoverable state requiring a new
+deployment.
+
+The pause target must be a venue this contract admitted, so a mistyped address reverts
+`VenueNotAllowed` rather than recording a pause that protects nothing.
+
+Venues themselves are never delisted, deliberately. Removing an admitted venue would set
+`canRedeem` false for accounts already holding its position token and trap them; the reversible
+deposit pause is the delisting mechanism, and it leaves the exit open by construction.
 
 ### Trust boundary: authenticity vs Grow approval
 
@@ -417,8 +463,8 @@ swept into another account's redeem.
 
 | Change | What is required |
 |---|---|
-| New venue for an already-supported protocol | `addVaults` from the registry owner. The protocol's adapter already exists and serves every venue of that protocol, so nothing is redeployed and every account sees the venue immediately. |
-| New **protocol** | Deploy a new executor pinning the additional registrar (it deploys its own registry), deploy adapters for it, `addVaults` the full intended set, then each account switches with one owner-signed `policy.setExecutor`. The policy module and the old stack are untouched. |
+| New venue for an already-supported protocol | `addVaults` from the owner. The protocol's adapter already exists and serves every venue of that protocol, so nothing is redeployed and every account sees the venue immediately. |
+| New **protocol** | Deploy a new executor pinning the additional registrar, deploy adapters bound to it, `addVaults` the full intended set, then each account switches with one owner-signed `policy.setExecutor`. The policy module and the old deployment are untouched. |
 | Change to executor or policy-module logic | Full stack migration, as before: a new executor, new adapters pinned to it, a new registry, and a new policy-module install on each account. |
 
 Adapters pin their executor, so a new executor requires new adapter deployments; the registrars
@@ -428,11 +474,10 @@ venue set at once, which is the trade for having no per-account venue gate.
 ### Deployment procedure
 
 `script/Deploy.s.sol` drives `GrowYieldDeployer.deployStack` from `script/config/<env>.json`.
-One atomic transaction deploys the executor (which deploys its registry), the policy module,
-and every adapter; admits the configured vault set; and offers registry ownership to
-`.registry.owner`:
+One atomic transaction deploys the executor (which is the venue registry), the policy module,
+and every adapter; admits the configured vault set; and offers ownership to `.registry.owner`:
 
-1. The executor's init code names the shared deployer as its registry's initial owner.
+1. The executor's init code names the shared deployer as its initial owner.
 2. The deployer calls `addVaults` with the full configured set, then `transferOwnership`.
 3. Governance calls `acceptOwnership()` in a later transaction.
 
@@ -517,7 +562,7 @@ sequenceDiagram
 
     O->>EP: Owner-signed UserOp, nonce key 1
     EP->>A: validate via entity-0 global owner validator
-    EP->>A: installValidation(Grow entity, executeBatch selector)
+    EP->>A: installValidation(Grow entity, execute selector)
     A->>P: onInstall(abi.encode(entityId, policyOwners, executor))
     P->>P: Store entity, policy owners, and approved executor under account
     Note over P,X: One transaction is the whole opt-in: the executor names<br/>the registry, the registry names the venues.
@@ -550,7 +595,7 @@ before selecting a replacement so the account cannot retain stale dual registrat
 `approvedExecutor` completes enrollment in the same call: no follow-up configuration
 transaction is required, and the account can never be left half-configured. A policy owner
 cannot authorize `installValidation`, owner management, policy management, `setExecutor`,
-guardian actions, arbitrary `execute`, or an arbitrary `executeBatch`.
+guardian actions, `executeBatch`, or an `execute` aimed anywhere but the approved executor.
 
 ## Automated rebalance execution flow
 
@@ -575,9 +620,9 @@ sequenceDiagram
     R->>EP: handleOps
     EP->>A: validateUserOp
     A->>P: validateUserOp(entityId, op, hash), 65-byte segment
-    P->>P: Check policy owner, sponsor, gas, fees, batch shape
+    P->>P: Check policy owner, sponsor, gas, fees, calldata shape
     P-->>EP: success or signature failure
-    EP->>A: executeUserOp then executeBatch
+    EP->>A: executeUserOp then execute
     A->>X: execute([redeem, deposit])
     X->>S: Redeem source position to account
     X->>X: Measure previous output
@@ -595,15 +640,15 @@ authorization remains usable while its nonce is current and its owner is authori
 
 Independent controls are available:
 
-1. Remove a policy owner through the account-owner path.
-2. Set one or both account adapter directions to zero.
-3. Permanently pause new deposits deployment-wide through the risk guardian.
-4. Uninstall the Grow validation entity through the owner path.
-5. Stop sponsor approval at the pinned paymaster.
+1. Remove a policy owner through the account-owner path (immediate, per account).
+2. Uninstall the Grow validation entity through the owner path (immediate, per account).
+3. Revoke the account's standing allowance to the executor through the owner path.
+4. Pause a venue's deposits — guardian or registry owner, protocol-wide, reversible by the
+   registry owner alone.
+5. Stop sponsoring at the account's approved paymaster, or point the account at another one.
 
-Registry reselection is a configuration control, not a revocation one: every registry the
-account can select must be nonempty, so it cannot be used as an off switch. Use control 1 or 4
-for an immediate, single-call account-wide stop.
+Controls 1 and 2 are the account-wide stops and take one owner-signed call. Control 4 is the
+protocol-wide one. Nothing here can block a redemption, by design.
 
 Keep redemptions enabled during venue incidents whenever the venue still permits an
 exit. Neither local contracts nor the guardian can guarantee external liquidity,

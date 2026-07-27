@@ -8,44 +8,37 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 
 import {GrowYieldAdapterRegistry} from "./GrowYieldAdapterRegistry.sol";
 import {IGrowYieldAdapterRegistry, Venue} from "./interfaces/IGrowYieldAdapterRegistry.sol";
+// solhint-disable-next-line no-unused-import
 import {
     AmountMode,
     IGrowYieldExecutor,
+    MAX_OPS,
     Operation,
     OperationKind
 } from "./interfaces/IGrowYieldExecutor.sol";
 import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 
 /// @title GrowYieldExecutor
-/// @notice Routes a caller's own funds through venues admitted by this executor's registry.
-/// @dev The executor and its registry are one unit: the constructor deploys the registry, so the
-///      registry names this executor and this executor names that registry, both immutably and
-///      with nothing settable afterwards. Which venues exist is therefore a single governance
-///      decision made by the registry owner, not a per-account configuration.
+/// @notice Routes a caller's own funds through venues this same contract has admitted.
+/// @dev Admission and execution are one contract: this *is* the venue registry, inheriting
+///      `GrowYieldAdapterRegistry`. Permissionless by construction — an operation pulls the
+///      source token from `msg.sender` and credits every output back to `msg.sender`.
 ///
-///      The executor holds no per-account state and no per-account permission. It is
-///      permissionless by construction: an operation pulls the source token from `msg.sender` and
-///      credits every output back to `msg.sender`, so a caller can only ever move their own
-///      funds, and only into or out of an admitted venue.
-///
-///      What still constrains an operation: the venue must be admitted and permit the direction,
-///      the adapter's runtime code must match the hash pinned at admission, a deposit's adapter
-///      must still derive the pinned `(asset, positionToken)` pair, the source token must match
-///      the venue and direction, output must clear both the caller's signed floor and a
-///      loss-capped preview, and no residual may be left on the adapter.
-///
-///      Deposit-side wind-down is the immutable risk guardian's; it is deliberately one-way.
+///      Two distinct authorities: the owner (`Ownable2Step`) admits venues and un-pauses; the
+///      immutable risk guardian can only pause deposits. Neither can move funds or block a
+///      redemption, and redemptions are never pausable.
 /// @custom:security-contact security@getgrowapp.co
-contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
+contract GrowYieldExecutor is
+    GrowYieldAdapterRegistry,
+    ReentrancyGuardTransient,
+    IGrowYieldExecutor
+{
     using SafeERC20 for IERC20;
 
     uint256 private constant BPS = 10_000;
 
     /// @notice Hard ceiling on the constructor-set loss cap (1%).
     uint16 public constant MAX_LOSS_BPS_CEILING = 100;
-
-    /// @inheritdoc IGrowYieldExecutor
-    IGrowYieldAdapterRegistry public immutable registry;
 
     /// @inheritdoc IGrowYieldExecutor
     uint16 public immutable maxLossBps;
@@ -56,44 +49,46 @@ contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
     /// @inheritdoc IGrowYieldExecutor
     mapping(address vault => bool) public depositsPaused;
 
-    /// @dev Restricts a function to the immutable risk guardian.
-    modifier onlyRiskGuardian() {
-        if (msg.sender != riskGuardian) revert OnlyRiskGuardian();
-        _;
-    }
-
     /// @param maxLossBps_ Maximum shortfall from preview, in basis points; must be nonzero so
     ///        venue rounding against the preview cannot brick operations.
-    /// @param riskGuardian_ Address able to permanently pause venue deposits.
-    /// @param registryOwner_ Initial owner of the registry this constructor deploys; should be a
-    ///        Safe or TimelockController, or a deployer that hands over in the same transaction.
-    /// @param registrars_ Canonical protocol registrars pinned for the registry's lifetime.
+    /// @param riskGuardian_ Address able to pause venue deposits; cannot un-pause, and must
+    ///        differ from `owner_`.
+    /// @param owner_ Address authorized to admit venues and un-pause; should be a Safe or
+    ///        TimelockController.
+    /// @param registrars_ Canonical protocol registrars pinned for this contract's lifetime.
     constructor(
         uint16 maxLossBps_,
         address riskGuardian_,
-        address registryOwner_,
+        address owner_,
         IGrowYieldAdapterRegistry.Registrars memory registrars_
-    ) {
-        if (maxLossBps_ == 0 || maxLossBps_ > MAX_LOSS_BPS_CEILING || riskGuardian_ == address(0)) {
-            revert Invalid();
-        }
+    ) GrowYieldAdapterRegistry(owner_, registrars_) {
+        if (
+            maxLossBps_ == 0 || maxLossBps_ > MAX_LOSS_BPS_CEILING || riskGuardian_ == address(0)
+                || riskGuardian_ == owner_
+        ) revert Invalid();
+
         maxLossBps = maxLossBps_;
         riskGuardian = riskGuardian_;
-
-        // Deployed here, not passed in: CREATE2 cannot resolve a mutual pin, because each
-        // contract's init code would have to contain the other's address. Creating the registry
-        // from the constructor makes both directions immutable with no initializer window.
-        registry = new GrowYieldAdapterRegistry(address(this), registryOwner_, registrars_);
     }
 
     /// @inheritdoc IGrowYieldExecutor
-    function pauseVaultDeposits(address vault) external onlyRiskGuardian {
+    function pauseVaultDeposits(address vault) external {
+        // Either authority may protect; only the owner may re-expose.
+        if (msg.sender != riskGuardian && msg.sender != owner()) revert NotAuthorizedToPause();
         // Reject a mistyped address instead of recording a pause that protects nothing.
-        if (registry.vaultAdapter(vault) == address(0)) revert VenueNotAllowed();
+        if (_venues[vault].adapter == address(0)) revert VenueNotAllowed();
 
         if (!depositsPaused[vault]) {
             depositsPaused[vault] = true;
-            emit VaultDepositsPaused(vault);
+            emit VaultDepositsPaused(vault, msg.sender);
+        }
+    }
+
+    /// @inheritdoc IGrowYieldExecutor
+    function unpauseVaultDeposits(address vault) external onlyOwner {
+        if (depositsPaused[vault]) {
+            depositsPaused[vault] = false;
+            emit VaultDepositsUnpaused(vault);
         }
     }
 
@@ -105,6 +100,7 @@ contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
     {
         uint256 count = ops.length;
         if (count == 0) revert EmptyBatch();
+        if (count > MAX_OPS) revert BatchTooLarge();
 
         received = new uint256[](count);
         address previousOutputToken;
@@ -125,28 +121,19 @@ contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
     ) private returns (uint256 receivedOut, address outputTokenAddress) {
         address vault = op.vault;
         bool isDeposit = op.kind == OperationKind.DEPOSIT;
-        Venue memory venue = registry.venue(vault);
+        Venue memory venue = _venues[vault];
 
         bool venuePermits = isDeposit ? venue.canDeposit : venue.canRedeem;
         if (venue.adapter == address(0) || !venuePermits) revert VenueNotAllowed();
         if (isDeposit && depositsPaused[vault]) revert DepositsPaused();
 
-        // this prevents ERC-7928 malicious contract upgrades from causing loss of funds.
-        if (venue.adapter.codehash != registry.adapterCodeHash(venue.adapter)) {
-            revert AdapterCodeChanged();
-        }
+        // Blocks ERC-7928 adapter upgrades from causing loss of funds.
+        if (venue.adapter.codehash != venue.adapterCodeHash) revert AdapterCodeChanged();
 
         IYieldAdapter adapter = IYieldAdapter(venue.adapter);
-        // The adapter serves every venue of its protocol and pins none of them, so the admitted
-        // pair is the only binding between this vault and its tokens. Re-deriving and comparing
-        // fails closed when protocol governance re-points a venue (an Aave reserve's aToken, a
-        // drifted `asset()`) after admission.
-        //
-        // Deposits only, deliberately. A deposit must never create a position in a token the
-        // registry did not admit, but a redemption operates on the pinned position token the
-        // account already holds and returns the pinned asset — blocking it on drift would trap
-        // the account in the very venue that just went bad. Exits stay open for as long as the
-        // venue itself permits them.
+        // The admitted pair is the only binding between this vault and its tokens, so re-deriving
+        // it fails closed when protocol governance re-points a venue after admission. Deposits
+        // only: blocking a redemption on drift would trap the account in the bad venue.
         if (
             isDeposit
                 && (adapter.asset(vault) != venue.asset
@@ -171,9 +158,8 @@ contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
 
         sourceToken.safeTransferFrom(msg.sender, venue.adapter, amount);
         uint256 sent = sourceToken.balanceOf(venue.adapter) - adapterSourceBefore;
-        // Rebasing position tokens (aTokens) settle transfers in scaled units and may
-        // deliver one wei off the requested amount; larger deviations are fee-on-transfer
-        // behavior and unsupported. The adapter operates on the measured amount.
+        // Rebasing position tokens (aTokens) may settle one wei off; larger deviations are
+        // fee-on-transfer behavior and unsupported.
         if (sent + 1 < amount || sent > amount + 1) revert UnsupportedToken();
 
         uint256 expected =
@@ -186,9 +172,12 @@ contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
             adapter.redeem(vault, sent, msg.sender);
         }
 
-        // A rebasing burn that rounds up may strand one wei of source on the adapter.
+        // The adapter must consume exactly `sent`: too much left behind is a stranded residual,
+        // too little is a donation swept from an unrelated balance. One wei either way is
+        // rebasing-token rounding.
+        uint256 sourceAfter = sourceToken.balanceOf(venue.adapter);
         if (
-            sourceToken.balanceOf(venue.adapter) > adapterSourceBefore + 1
+            sourceAfter + 1 < adapterSourceBefore || sourceAfter > adapterSourceBefore + 1
                 || outputToken.balanceOf(venue.adapter) > adapterOutputBefore
         ) revert ResidualBalance();
 

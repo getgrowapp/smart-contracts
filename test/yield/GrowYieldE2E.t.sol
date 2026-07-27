@@ -22,6 +22,7 @@ import {
 } from "@alchemy/modular-account/helpers/ExecutionInstallDelegate.sol";
 
 import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
 import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
 import {
@@ -95,27 +96,20 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
 
         underlying.mint(account, 1_000e6);
         _runPolicyUserOp(
-            _batch1(
-                address(underlying), _ops1(_op(aaveVault, OperationKind.DEPOSIT, type(uint256).max))
-            ),
+            _policyCall(_ops1(_op(aaveVault, OperationKind.DEPOSIT, type(uint256).max))),
             automationPk
         );
         assertEq(aavePool.aToken().balanceOf(account), 1_000e6);
         _assertBatchHygiene();
 
         _runPolicyUserOp(
-            _batch1(address(aavePool.aToken()), _ops1(_op(aaveVault, OperationKind.REDEEM, 400e6))),
-            automationPk
+            _policyCall(_ops1(_op(aaveVault, OperationKind.REDEEM, 400e6))), automationPk
         );
         assertEq(underlying.balanceOf(account), 400e6);
         assertEq(aavePool.aToken().balanceOf(account), 600e6);
 
-        address[] memory tokens = new address[](2);
-        tokens[0] = address(aavePool.aToken());
-        tokens[1] = address(underlying);
         _runPolicyUserOp(
-            _batch(
-                tokens,
+            _policyCall(
                 _ops2(
                     _op(aaveVault, OperationKind.REDEEM, type(uint256).max),
                     _op(morphoVault, OperationKind.DEPOSIT, type(uint256).max)
@@ -155,10 +149,7 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
             )
         );
         underlying.mint(account, 100e6);
-        _runPolicyUserOp(
-            _batch1(address(underlying), _ops1(_op(aaveVault, OperationKind.DEPOSIT, 50e6))),
-            secondKey
-        );
+        _runPolicyUserOp(_policyCall(_ops1(_op(aaveVault, OperationKind.DEPOSIT, 50e6))), secondKey);
 
         _runOwnerUserOp(
             abi.encodeCall(
@@ -166,9 +157,8 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
                 (address(policyModule), 0, abi.encodeCall(policyModule.removeOwner, (automation)))
             )
         );
-        PackedUserOperation memory revoked = _buildPolicyUserOp(
-            _batch1(address(underlying), _ops1(_op(aaveVault, OperationKind.DEPOSIT, 50e6)))
-        );
+        PackedUserOperation memory revoked =
+            _buildPolicyUserOp(_policyCall(_ops1(_op(aaveVault, OperationKind.DEPOSIT, 50e6))));
         revoked.signature = _policyModuleSignature(revoked, automationPk);
         _expectFailedOp("AA24 signature error");
         _handleOps(revoked);
@@ -179,62 +169,72 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
 
     function test_e2e_tamperedCallDataFailsSignatureValidation() public {
         _installPolicy();
-        PackedUserOperation memory userOp = _buildPolicyUserOp(
-            _batch1(address(underlying), _ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6)))
-        );
+        PackedUserOperation memory userOp =
+            _buildPolicyUserOp(_policyCall(_ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6))));
         bytes memory signature = _policyModuleSignature(userOp, automationPk);
-        userOp.callData = _batch1(
-            address(otherUnderlying), _ops1(_op(aaveVaultOther, OperationKind.DEPOSIT, 1e6))
-        );
+        userOp.callData = _policyCall(_ops1(_op(aaveVaultOther, OperationKind.DEPOSIT, 1e6)));
         userOp.signature = signature;
 
         _expectFailedOp("AA24 signature error");
         _handleOps(userOp);
     }
 
-    function test_e2e_policyOwnerCannotBypassBatchPolicy() public {
+    /// @dev The policy accepts one shape and nothing adjacent to it: not a batch that contains
+    ///      the same executor call, and not a direct call to a token the account holds.
+    function test_e2e_policyOwnerCannotBypassCallPolicy() public {
         _installPolicy();
-        Call[] memory calls = new Call[](2);
-        calls[0] = Call(address(underlying), 0, _approve(address(executor), type(uint256).max));
-        calls[1] = Call(
+
+        Call[] memory calls = new Call[](1);
+        calls[1 - 1] = Call(
             address(executor), 0, _executeData(_ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6)))
         );
-        PackedUserOperation memory userOp =
-            _buildPolicyUserOp(abi.encodeCall(IModularAccount.executeBatch, (calls)));
-        userOp.signature = _policyModuleSignature(userOp, automationPk);
-
-        _expectFailedOp("AA24 signature error");
-        _handleOps(userOp);
-    }
-
-    /// @dev Requirement: only the account's own owner path may change which executor — and so
-    ///      which registry, and so which venue set — the account uses. The policy library
-    ///      accepts no batch shape containing `setExecutor`, so a policy-owner signature fails
-    ///      validation whether the call is sent bare or wrapped in a batch.
-    function test_e2e_policyOwnerCannotRetargetAccountExecutor() public {
-        _installPolicy();
-        GrowYieldExecutor rogue = _deployExecutor(address(this));
-
-        bytes memory retarget = abi.encodeCall(policyModule.setExecutor, (address(rogue)));
-
-        // A bare `execute` never reaches the module: the Grow entity is installed for
-        // `executeBatch` only, so the account has no validation function for that selector.
-        PackedUserOperation memory bare = _buildPolicyUserOp(
-            abi.encodeCall(IModularAccount.execute, (address(policyModule), 0, retarget))
-        );
-        bare.signature = _policyModuleSignature(bare, automationPk);
-        vm.expectPartialRevert(IEntryPoint.FailedOpWithRevert.selector);
-        _handleOps(bare);
-
-        Call[] memory calls = new Call[](3);
-        calls[0] = Call(address(underlying), 0, _approve(address(executor), type(uint256).max));
-        calls[1] = Call(address(policyModule), 0, retarget);
-        calls[2] = Call(address(underlying), 0, _approve(address(executor), 0));
         PackedUserOperation memory batched =
             _buildPolicyUserOp(abi.encodeCall(IModularAccount.executeBatch, (calls)));
         batched.signature = _policyModuleSignature(batched, automationPk);
-        _expectFailedOp("AA24 signature error");
+        vm.expectPartialRevert(IEntryPoint.FailedOpWithRevert.selector);
         _handleOps(batched);
+
+        // A direct token transfer wrapped in the accepted selector is still not an executor call.
+        PackedUserOperation memory drain = _buildPolicyUserOp(
+            abi.encodeCall(
+                IModularAccount.execute,
+                (address(underlying), 0, abi.encodeCall(IERC20.transfer, (makeAddr("thief"), 1e6)))
+            )
+        );
+        drain.signature = _policyModuleSignature(drain, automationPk);
+        _expectFailedOp("AA24 signature error");
+        _handleOps(drain);
+    }
+
+    /// @dev Requirement: only the account's own owner path may change which executor — and so
+    ///      which registry, and so which venue set — the account uses. The policy accepts one
+    ///      calldata shape and `setExecutor` is not in it, so a policy-owner signature fails
+    ///      however the call is dressed up.
+    function test_e2e_policyOwnerCannotRetargetAccountExecutor() public {
+        _installPolicy();
+        GrowYieldExecutor rogue = _deployExecutor(address(this));
+        _admitAaveVaultOn(rogue);
+
+        bytes memory retarget = abi.encodeCall(policyModule.setExecutor, (address(rogue)));
+
+        // `executeBatch` never reaches the module: the Grow entity validates `execute` only, so
+        // the account has no validation function for that selector at all.
+        Call[] memory calls = new Call[](1);
+        calls[0] = Call(address(policyModule), 0, retarget);
+        PackedUserOperation memory batched =
+            _buildPolicyUserOp(abi.encodeCall(IModularAccount.executeBatch, (calls)));
+        batched.signature = _policyModuleSignature(batched, automationPk);
+        vm.expectPartialRevert(IEntryPoint.FailedOpWithRevert.selector);
+        _handleOps(batched);
+
+        // Wrapped in the one selector the Grow entity does validate, the policy still rejects
+        // it: the target is the module, not the account's executor.
+        PackedUserOperation memory wrapped = _buildPolicyUserOp(
+            abi.encodeCall(IModularAccount.execute, (address(policyModule), 0, retarget))
+        );
+        wrapped.signature = _policyModuleSignature(wrapped, automationPk);
+        _expectFailedOp("AA24 signature error");
+        _handleOps(wrapped);
 
         assertEq(policyModule.accountExecutor(account), address(executor), "unchanged");
 
@@ -250,8 +250,7 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
         uint256 sponsorDepositBefore = paymaster.getDeposit();
 
         _runPolicyUserOp(
-            _batch1(address(underlying), _ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6))),
-            automationPk
+            _policyCall(_ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6))), automationPk
         );
 
         assertEq(account.balance, accountNativeBefore);
@@ -260,9 +259,8 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
 
     function test_e2e_inflatedPreVerificationGasIsRejected() public {
         _installPolicy();
-        PackedUserOperation memory userOp = _buildPolicyUserOp(
-            _batch1(address(underlying), _ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6)))
-        );
+        PackedUserOperation memory userOp =
+            _buildPolicyUserOp(_policyCall(_ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6))));
         userOp.preVerificationGas = MAX_PRE_VERIFICATION_GAS + 1;
         userOp.signature = _policyModuleSignature(userOp, automationPk);
 
@@ -273,9 +271,8 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
     function test_e2e_replayFailsNonce() public {
         _installPolicy();
         underlying.mint(account, 2e6);
-        PackedUserOperation memory userOp = _buildPolicyUserOp(
-            _batch1(address(underlying), _ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6)))
-        );
+        PackedUserOperation memory userOp =
+            _buildPolicyUserOp(_policyCall(_ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6))));
         userOp.signature = _policyModuleSignature(userOp, automationPk);
         _handleOps(userOp);
 
@@ -286,8 +283,10 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
     /// @dev The account's entire opt-in: one owner-authorized call installing the Grow entity,
     ///      its policy owners, and the executor whose registry defines every usable venue.
     function _installPolicy() internal {
+        // The Grow entity validates `execute` only: the policy's one accepted shape is a single
+        // forwarded call to the executor, so `executeBatch` is deliberately not enrolled.
         bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = IModularAccount.executeBatch.selector;
+        selectors[0] = IModularAccount.execute.selector;
         address[] memory initialOwners = new address[](1);
         initialOwners[0] = automation;
 
@@ -299,11 +298,30 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
                         address(policyModule), POLICY_ENTITY_ID, false, false, true
                     ),
                     selectors,
-                    abi.encode(POLICY_ENTITY_ID, initialOwners, address(executor)),
+                    abi.encode(
+                        POLICY_ENTITY_ID, initialOwners, address(executor), address(paymaster)
+                    ),
                     new bytes[](0)
                 )
             )
         );
+        _grantStandingAllowances();
+    }
+
+    /// @dev The owner grants the executor a standing allowance once. It is not exploitable:
+    ///      `execute` only ever pulls from and pays to `msg.sender`, so reaching the allowance
+    ///      still requires a signature authorizing the account itself to call.
+    function _grantStandingAllowances() internal {
+        address[3] memory tokens =
+            [address(underlying), address(aavePool.aToken()), address(morphoWrapper)];
+        for (uint256 i; i < tokens.length; ++i) {
+            _runOwnerUserOp(
+                abi.encodeCall(
+                    IModularAccount.execute,
+                    (tokens[i], 0, _approve(address(executor), type(uint256).max))
+                )
+            );
+        }
     }
 
     function _setExecutorAsOwner(address executor_) internal {
@@ -368,10 +386,9 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
         vm.expectRevert(abi.encodeWithSelector(IEntryPoint.FailedOp.selector, 0, reason));
     }
 
+    /// @dev Allowances are standing by design; what must always be true is that no value is
+    ///      parked on the executor or any adapter between operations.
     function _assertBatchHygiene() internal view {
-        assertEq(underlying.allowance(account, address(executor)), 0);
-        assertEq(aavePool.aToken().allowance(account, address(executor)), 0);
-        assertEq(morphoWrapper.allowance(account, address(executor)), 0);
         assertEq(underlying.balanceOf(address(executor)), 0);
         assertEq(underlying.balanceOf(address(aaveAdapter)), 0);
         assertEq(underlying.balanceOf(address(morphoAdapter)), 0);

@@ -2,9 +2,8 @@
 pragma solidity 0.8.36;
 
 /// @notice Protocol a venue is admitted under, selecting which pinned registrar authenticates it.
-/// @dev The registry pins one canonical registrar set per protocol at deployment, so this enum
-///      is closed for the registry's lifetime. Supporting a new protocol requires a new registry
-///      deployment. ABI decoding rejects out-of-range values.
+/// @dev Closed for the registry's lifetime; a new protocol requires a new registry deployment.
+///      ABI decoding rejects out-of-range values.
 enum Protocol {
     AAVE,
     MORPHO,
@@ -14,17 +13,19 @@ enum Protocol {
 }
 
 /// @notice Everything the executor needs to run an operation against an admitted venue.
-/// @dev A zero `adapter` means the venue is not admitted by this registry. `asset` and
-///      `positionToken` are pinned at admission: the executor derives its source and output
-///      tokens from these, not from the adapter, and rejects the operation if the adapter's
-///      current derivation has drifted away from them.
+/// @dev A zero `adapter` means the venue is not admitted. The executor derives its source and
+///      output tokens from the pinned `asset` / `positionToken`, not from the adapter, and
+///      rejects an operation whose adapter has drifted away from them.
 /// @param adapter Protocol adapter that transacts with this venue.
+/// @param adapterCodeHash Adapter runtime code hash pinned when it first admitted a venue,
+///        carried here so resolving a venue costs one call instead of two.
 /// @param asset Underlying token pinned for this venue at admission.
 /// @param positionToken Position token pinned for this venue at admission.
 /// @param canDeposit Whether new deposits may be routed into this venue.
 /// @param canRedeem Whether redemptions may be routed out of this venue.
 struct Venue {
     address adapter;
+    bytes32 adapterCodeHash;
     address asset;
     address positionToken;
     bool canDeposit;
@@ -33,6 +34,7 @@ struct Venue {
 
 /// @title IGrowYieldAdapterRegistry
 /// @notice Append-only directional permissions for factory-authenticated venues.
+/// @dev Implemented by `GrowYieldExecutor` itself — admission and execution are one contract.
 interface IGrowYieldAdapterRegistry {
     /// @notice Canonical protocol registrars pinned for this registry's lifetime.
     /// @dev A zero address marks the protocol unsupported by this registry; `addVaults`
@@ -87,7 +89,7 @@ interface IGrowYieldAdapterRegistry {
     /// @notice The executor, registrar, adapter, or venue configuration is invalid.
     error Invalid();
 
-    /// @notice `addVaults` received no entries.
+    /// @notice `addVaults` or `execute` received no entries.
     error EmptyBatch();
 
     /// @notice This registry pins no registrar for the declared protocol.
@@ -106,10 +108,8 @@ interface IGrowYieldAdapterRegistry {
     error DuplicateVenue();
 
     /// @notice The adapter's runtime code no longer matches the hash pinned on first admission.
+    ///         Checked at admission and again on every operation.
     error AdapterCodeChanged();
-
-    /// @notice Executor every admitted adapter must authorize.
-    function executor() external view returns (address);
 
     /// @notice Admit venues authenticated by this registry's pinned registrars.
     /// @dev Append-only: an admitted venue's adapter, directions, and token pair are never

@@ -29,39 +29,23 @@ import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 /// @title GrowYieldAdapterRegistry
 /// @notice Append-only venue set whose members must be authenticated by deployment-pinned
 ///         protocol registrars.
-/// @dev One adapter serves every venue of its protocol, so this registry — not the adapter — is
-///      where a venue becomes usable. `addVaults` is the only writer: an admitted venue's
-///      adapter, protocol, directions, and `(asset, positionToken)` pair are fixed for the
-///      registry's lifetime. The supported protocol set and its canonical registrars are
-///      constructor-pinned, so supporting a new protocol requires deploying a new registry.
-///      Nothing on-chain iterates the admitted set, so the venue count is bounded only by
-///      governance intent.
+/// @dev Abstract: the admission half of `GrowYieldExecutor`, which inherits it. `address(this)`
+///      is therefore the executor every admitted adapter must authorize.
 ///
-///      Two distinct questions are answered in two distinct places. The registrar checks here
-///      answer "is this a genuine venue of the named protocol?" from the registry's own pinned
-///      registrars and from the venue's own state — never from the adapter's account of the
-///      venue — so the owner cannot admit a venue the protocol never created. Whether that
-///      authentic venue is an acceptable Grow risk remains the owner's decision, expressed by
-///      calling `addVaults` at all.
+///      `addVaults` is the only writer: an admitted venue's adapter, protocol, directions, and
+///      `(asset, positionToken)` pair are fixed for the registry's lifetime, and the registrar
+///      set is constructor-pinned, so a new protocol requires a new registry.
 ///
-///      Because adapters are venue-agnostic, admission also pins each venue's token pair. The
-///      executor derives its source and output tokens from that pinned pair and rejects an
-///      operation whose adapter no longer derives the same, which is what makes protocol-level
-///      re-pointing (an Aave reserve's aToken, a drifted `asset()`) fail closed.
+///      The registrar checks answer only "is this a genuine venue of the named protocol?", read
+///      from the pinned registrars and the venue's own state — never from the adapter's account
+///      of the venue. Whether that venue is an acceptable Grow risk is the owner's decision,
+///      expressed by calling `addVaults` at all.
 ///
-///      Adapters must be direct, non-upgradeable deployments because their runtime code hash is
-///      pinned on first admission. Once the intended venue set is final the owner may renounce
-///      ownership, making the registry fully immutable.
-///
-///      This registry is deployed by its executor's constructor and the two are permanently
-///      bound: `executor` here and `registry` there are both immutable, and neither is settable.
-///      Admitting a venue is therefore the single governance decision that makes it usable — the
-///      executor holds no per-account opt-in of its own.
+///      Admission also pins each venue's token pair, because adapters are venue-agnostic; the
+///      executor rejects an operation whose adapter no longer derives the same. Adapters must be
+///      direct, non-upgradeable deployments, as their code hash is pinned on first admission.
 /// @custom:security-contact security@getgrowapp.co
-contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
-    /// @inheritdoc IGrowYieldAdapterRegistry
-    address public immutable executor;
-
+abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
     /// @notice Aave V3 pool every admitted Aave adapter must supply to.
     address public immutable aavePool;
 
@@ -86,7 +70,8 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
     /// @notice CapyFi Comptroller that must list an admitted caToken market.
     address public immutable capyFiComptroller;
 
-    mapping(address vault => Venue) private _venues;
+    /// @dev Read directly by the inherited execution path; `venue()` is the external view.
+    mapping(address vault => Venue) internal _venues;
 
     mapping(address vault => Protocol) private _protocols;
 
@@ -98,17 +83,12 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
     /// @inheritdoc IGrowYieldAdapterRegistry
     mapping(address adapter => bytes32) public adapterCodeHash;
 
-    /// @param executor_ Executor every admitted adapter must authorize. Deployed only by that
-    ///        executor's own constructor, so it is still mid-construction here and has no
-    ///        runtime code yet; only its address can be checked.
     /// @param owner_ Address authorized to admit venues; should be a Safe or TimelockController.
-    /// @param registrars_ Canonical registrars pinned for this registry's lifetime. A zero
+    /// @param registrars_ Canonical registrars pinned for this contract's lifetime. A zero
     ///        address marks that protocol unsupported here.
-    constructor(address executor_, address owner_, Registrars memory registrars_) Ownable(owner_) {
-        if (executor_ == address(0)) revert Invalid();
-
-        // A protocol is either fully pinned or absent. A half-configured protocol would
-        // otherwise skip part of its authenticity proof at admission time.
+    constructor(address owner_, Registrars memory registrars_) Ownable(owner_) {
+        // A protocol is either fully pinned or absent; a half-configured one would skip part of
+        // its authenticity proof at admission.
         bool aave = registrars_.aavePool != address(0);
         if (aave != (registrars_.aaveDataProvider != address(0))) revert Invalid();
 
@@ -127,7 +107,6 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
         _requireContractOrUnset(registrars_.eulerEarnFactory);
         _requireContractOrUnset(registrars_.capyFiComptroller);
 
-        executor = executor_;
         aavePool = registrars_.aavePool;
         aaveDataProvider = registrars_.aaveDataProvider;
         morphoVaultFactory = registrars_.morphoVaultFactory;
@@ -192,7 +171,8 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
                 || (!config.canDeposit && !config.canRedeem)
         ) revert Invalid();
         if (_venues[vault].adapter != address(0)) revert VaultAlreadyRegistered();
-        if (IYieldAdapter(adapter).executor() != executor) revert Invalid();
+        // The adapter must authorize this very contract.
+        if (IYieldAdapter(adapter).executor() != address(this)) revert Invalid();
 
         address asset = IYieldAdapter(adapter).asset(vault);
         address position = IYieldAdapter(adapter).positionToken(vault);
@@ -200,14 +180,14 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
             revert Invalid();
         }
 
-        // One position token may back one venue. A second venue reporting the same position
-        // would double-count an account's directional budget over a single balance.
+        // One position token backs one venue; a second would double-count a single balance.
         if (_positionClaimed[position]) revert DuplicateVenue();
 
         _requireCanonicalVenue(config.protocol, adapter, vault, asset, position);
-        _pinAdapter(adapter);
+        bytes32 codeHash = _pinAdapter(adapter);
 
-        _venues[vault] = Venue(adapter, asset, position, config.canDeposit, config.canRedeem);
+        _venues[vault] =
+            Venue(adapter, codeHash, asset, position, config.canDeposit, config.canRedeem);
         _protocols[vault] = config.protocol;
         _positionClaimed[position] = true;
         _vaults.push(vault);
@@ -218,9 +198,9 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
     }
 
     /// @dev Pins an adapter's runtime code hash on first admission and enforces it afterwards.
-    function _pinAdapter(address adapter) private {
+    function _pinAdapter(address adapter) private returns (bytes32 current) {
         bytes32 pinned = adapterCodeHash[adapter];
-        bytes32 current = adapter.codehash;
+        current = adapter.codehash;
         if (pinned == bytes32(0)) {
             adapterCodeHash[adapter] = current;
             emit AdapterPinned(adapter, current);
@@ -229,9 +209,22 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
         }
     }
 
-    /// @dev Proves `vault` is a genuine venue of `protocol` using this registry's pinned
-    ///      registrars and the venue's own state, and that `adapter` is wired to exactly those
-    ///      registrars. Facts read from `adapter` are protocol-wide only.
+    /// @dev Reads an `address` getter from an adapter. An adapter of a different protocol has no
+    ///      such getter, so a mis-declared protocol surfaces as `RegistrarMismatch` rather than an
+    ///      undiagnosable decode revert.
+    function _adapterWiring(address adapter, bytes4 selector) private view returns (address) {
+        (bool ok, bytes memory returned) = adapter.staticcall(abi.encodeWithSelector(selector));
+        if (!ok || returned.length != 32) revert RegistrarMismatch();
+
+        // Decoded as a word so dirty upper bits are rejected rather than silently masked.
+        uint256 word = abi.decode(returned, (uint256));
+        if (word > type(uint160).max) revert RegistrarMismatch();
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return address(uint160(word));
+    }
+
+    /// @dev Proves `vault` is a genuine venue of `protocol` from the pinned registrars and the
+    ///      venue's own state, and that `adapter` is wired to exactly those registrars.
     function _requireCanonicalVenue(
         Protocol protocol,
         address adapter,
@@ -246,13 +239,17 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
         } else if (protocol == Protocol.EULER_EVK) {
             address factory = eulerEVaultFactory;
             if (factory == address(0)) revert UnsupportedProtocol();
-            if (IAdapterVenue(adapter).factory() != factory) revert RegistrarMismatch();
+            if (_adapterWiring(adapter, IAdapterVenue.factory.selector) != factory) {
+                revert RegistrarMismatch();
+            }
             if (!IEulerEVaultFactory(factory).isProxy(vault)) revert NotCanonicalVenue();
             _requireErc4626Venue(vault, asset, position);
         } else if (protocol == Protocol.EULER_EARN) {
             address factory = eulerEarnFactory;
             if (factory == address(0)) revert UnsupportedProtocol();
-            if (IAdapterVenue(adapter).factory() != factory) revert RegistrarMismatch();
+            if (_adapterWiring(adapter, IAdapterVenue.factory.selector) != factory) {
+                revert RegistrarMismatch();
+            }
             if (!IEulerEarnFactory(factory).isVault(vault)) revert NotCanonicalVenue();
             _requireErc4626Venue(vault, asset, position);
         } else {
@@ -261,8 +258,8 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
         }
     }
 
-    /// @dev Aave keys reserves by underlying asset and shares one pool across every reserve, so
-    ///      the venue identifier is the asset and the position token is the reserve's aToken.
+    /// @dev Aave keys reserves by underlying asset, so the venue identifier is the asset and the
+    ///      position token is the reserve's aToken.
     function _requireCanonicalAave(address adapter, address vault, address asset, address position)
         private
         view
@@ -271,8 +268,8 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
         address provider = aaveDataProvider;
         if (pool == address(0)) revert UnsupportedProtocol();
         if (
-            IAdapterVenue(adapter).pool() != pool
-                || IAdapterVenue(adapter).dataProvider() != provider
+            _adapterWiring(adapter, IAdapterVenue.pool.selector) != pool
+                || _adapterWiring(adapter, IAdapterVenue.dataProvider.selector) != provider
         ) revert RegistrarMismatch();
 
         if (asset != vault) revert NotCanonicalVenue();
@@ -280,11 +277,9 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
         if (aToken != position) revert NotCanonicalVenue();
     }
 
-    /// @dev Proves the full wrapper shape once. VaultV2 abdication is irreversible and the
-    ///      `adapters` array only changes through `addAdapter` / `removeAdapter`, so a
-    ///      single-entry adapter set verified here stays frozen for the wrapper's lifetime. The
-    ///      adapter's per-operation check that liquidity still routes to `adapters(0)` is then
-    ///      sufficient, without re-proving factory provenance on every operation.
+    /// @dev Proves the full wrapper shape once. Abdication is irreversible and the `adapters`
+    ///      array only changes through `addAdapter` / `removeAdapter`, so the single-entry adapter
+    ///      set verified here stays frozen, and the adapter need only re-check routing per op.
     function _requireCanonicalMorpho(
         address adapter,
         address vault,
@@ -294,7 +289,9 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
         address vaultFactory = morphoVaultFactory;
         address eligibility = morphoEligibility;
         if (vaultFactory == address(0)) revert UnsupportedProtocol();
-        if (IAdapterVenue(adapter).eligibility() != eligibility) revert RegistrarMismatch();
+        if (_adapterWiring(adapter, IAdapterVenue.eligibility.selector) != eligibility) {
+            revert RegistrarMismatch();
+        }
 
         if (!IVaultV2Factory(vaultFactory).isVaultV2(vault)) revert NotCanonicalVenue();
 
@@ -337,7 +334,9 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
     ) private view {
         address comptroller = capyFiComptroller;
         if (comptroller == address(0)) revert UnsupportedProtocol();
-        if (IAdapterVenue(adapter).comptroller() != comptroller) revert RegistrarMismatch();
+        if (_adapterWiring(adapter, IAdapterVenue.comptroller.selector) != comptroller) {
+            revert RegistrarMismatch();
+        }
 
         (bool isListed,,) = ICapyFiComptroller(comptroller).markets(vault);
         if (

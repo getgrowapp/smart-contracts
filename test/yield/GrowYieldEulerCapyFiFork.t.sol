@@ -34,7 +34,6 @@ contract GrowYieldEulerCapyFiForkTest is Test {
     address internal constant CAPY_USDC = 0x5aDb71adb317CE975A405e90335068F0aF9F26C7;
 
     GrowYieldExecutor internal executor;
-    GrowYieldAdapterRegistry internal registry;
     address internal account;
 
     function setUp() public {
@@ -52,18 +51,18 @@ contract GrowYieldEulerCapyFiForkTest is Test {
         IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
             new IGrowYieldAdapterRegistry.VaultConfig[](1);
         vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(adapter, vault, protocol, true, true);
-        registry.addVaults(vaults);
+        executor.addVaults(vaults);
     }
 
     function _adapterOf(address vault) internal view returns (address) {
-        return registry.vaultAdapter(vault);
+        return executor.vaultAdapter(vault);
     }
 
     /// @dev A new executor also means a new, empty registry: the two are deployed together and
     ///      permanently bound.
     function _freshExecutor() internal {
-        executor = new GrowYieldExecutor(50, address(this), address(this), _forkRegistrars());
-        registry = GrowYieldAdapterRegistry(address(executor.registry()));
+        executor =
+            new GrowYieldExecutor(50, makeAddr("riskGuardian"), address(this), _forkRegistrars());
     }
 
     function _depositRedeem(address vault, address position) internal {
@@ -209,7 +208,7 @@ contract GrowYieldEulerCapyFiForkTest is Test {
         _freshExecutor();
         EulerEVaultAdapter adapter =
             new EulerEVaultAdapter(IEulerEVaultFactory(EVAULT_FACTORY), address(executor));
-        GrowYieldAdapterRegistry r = registry;
+        GrowYieldExecutor r = executor;
 
         IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
             new IGrowYieldAdapterRegistry.VaultConfig[](1);
@@ -228,7 +227,7 @@ contract GrowYieldEulerCapyFiForkTest is Test {
         _freshExecutor();
         CapyFiAdapter adapter =
             new CapyFiAdapter(address(executor), ICapyFiComptroller(EVAULT_FACTORY));
-        GrowYieldAdapterRegistry r = registry;
+        GrowYieldExecutor r = executor;
 
         IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
             new IGrowYieldAdapterRegistry.VaultConfig[](1);

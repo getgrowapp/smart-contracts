@@ -6,9 +6,8 @@ import {AbstractEulerAdapter} from "./AbstractEulerAdapter.sol";
 
 /// @title EulerEarnAdapter
 /// @notice GrowYield adapter for every Euler Earn vault of one EulerEarnFactory.
-/// @dev Authenticity is proven by the pinned EulerEarnFactory's `isVault` registry, re-checked on
-///      every operation so a vault the factory no longer recognizes fails closed. The venue's
-///      underlying is pinned by the registry and re-verified by the executor.
+/// @dev Authenticity is the pinned EulerEarnFactory's `isVault` registry, re-checked every
+///      operation so a vault the factory no longer recognizes fails closed.
 /// @custom:security-contact security@getgrowapp.co
 contract EulerEarnAdapter is AbstractEulerAdapter {
     /// @notice Canonical EulerEarnFactory used to authenticate vaults.

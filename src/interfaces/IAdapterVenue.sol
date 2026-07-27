@@ -4,12 +4,11 @@ pragma solidity 0.8.36;
 /// @title IAdapterVenue
 /// @notice Protocol-wide infrastructure an adapter pins immutably, read by the registry at
 ///         admission to prove the adapter is wired to the registry's own registrars.
-/// @dev Every field is protocol-wide, never per-venue: one adapter serves every venue of its
-///      protocol, so these are the only addresses it can pin. Per-venue facts are read from the
-///      venue itself, so the registry never has to trust an adapter's account of a vault.
-///      The registry calls only the getters belonging to the declared protocol; unrelated ones
-///      are absent on that adapter and are never invoked. Every getter is `address`-shaped in
-///      the ABI even where the adapter declares a concrete interface type.
+/// @dev Every field is protocol-wide, never per-venue; per-venue facts are read from the venue
+///      itself, so the registry never trusts an adapter's account of a vault. Only the getters
+///      belonging to the declared protocol are called — unrelated ones are absent on that adapter.
+///      Every getter is `address`-shaped in the ABI even where the adapter declares a concrete
+///      interface type.
 interface IAdapterVenue {
     /// @notice Euler EVK / Euler Earn: the canonical factory that must have created the vault.
     function factory() external view returns (address);

@@ -15,15 +15,9 @@ import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 /// @notice GrowYield adapter for every Morpho VaultV2 wrapper gated by one eligibility oracle.
 /// @dev `vault` is the VaultV2 wrapper, which is also its own position token.
 ///
-///      Registry admission proves the wrapper's full shape once: created by the canonical VaultV2
-///      factory, exactly one adapter, that adapter created by the canonical VaultV1 adapter
-///      factory and parented to this wrapper, `addAdapter` and `removeAdapter` both abdicated,
-///      liquidity routed to it with empty data, and an eligible child on a matching asset.
-///
-///      Abdication is irreversible in VaultV2 and the `adapters` array changes only through
-///      `addAdapter` / `removeAdapter`, so that single-entry adapter set is frozen for the
-///      wrapper's lifetime. Every operation therefore only needs to re-check what an allocator
-///      can still move: that liquidity still routes to `adapters(0)` with empty data, that the
+///      Registry admission proves the wrapper's full shape once, and its single-entry adapter set
+///      is frozen by irreversible abdication. Each operation therefore re-checks only what an
+///      allocator can still move: that liquidity routes to `adapters(0)` with empty data, that the
 ///      child is still eligible, and the caller's current round-trip gates. Later gate changes,
 ///      liquidity, or venue governance can still impair exits.
 /// @custom:security-contact security@getgrowapp.co
@@ -134,8 +128,7 @@ contract MorphoVaultV2Adapter is IYieldAdapter {
 
     /// @dev Re-checks the mutable half of admission: liquidity must still route to the wrapper's
     ///      frozen single adapter with empty data, and that adapter's child must still be
-    ///      eligible. Factory provenance of `adapters(0)` was proven at admission and cannot
-    ///      change, because the adapter set is frozen by irreversible abdication.
+    ///      eligible. Factory provenance of `adapters(0)` was proven at admission and is frozen.
     function _checkRouting(address vault) private view {
         IVaultV2 wrapper = IVaultV2(vault);
         address liquidityAdapter = wrapper.adapters(0);
