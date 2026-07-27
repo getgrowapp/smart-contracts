@@ -163,7 +163,7 @@ contract GrowYieldForkTest is Test {
     }
 
     function test_fork_registryRemainsFixed() public view {
-        assertTrue(executor.canDeposit(USDC));
+        assertTrue(executor.venue(USDC).canDeposit);
         assertEq(executor.adapterCodeHash(address(adapter)), address(adapter).codehash);
     }
 }

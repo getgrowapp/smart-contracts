@@ -137,16 +137,6 @@ abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterReg
     }
 
     /// @inheritdoc IGrowYieldAdapterRegistry
-    function canDeposit(address vault) external view returns (bool) {
-        return _venues[vault].canDeposit;
-    }
-
-    /// @inheritdoc IGrowYieldAdapterRegistry
-    function canRedeem(address vault) external view returns (bool) {
-        return _venues[vault].canRedeem;
-    }
-
-    /// @inheritdoc IGrowYieldAdapterRegistry
     function vaultAdapter(address vault) external view returns (address) {
         return _venues[vault].adapter;
     }

@@ -9,8 +9,13 @@ enum OperationKind {
     REDEEM
 }
 
-// Maximum operations in one `execute` batch. Single source of truth: the executor enforces it
-// directly and the policy library derives its calldata ceiling from it.
+// Maximum operations in one `execute` batch, sized for the intended shapes: a deposit or a
+// withdrawal is one operation, a reallocation is two, and four covers a two-venue rebalance.
+// What bounds it now is execution gas under the sponsor's call-gas ceiling, since each operation
+// makes several external balance reads plus a preview. It was originally a validation-phase
+// bound, which no longer applies: the policy library stopped decoding operations, so validation
+// cost barely moves with batch size. Single source of truth either way — the executor enforces
+// this directly and the policy library derives its calldata ceiling from it.
 uint256 constant MAX_OPS = 4;
 
 /// @notice How an operation resolves its source amount.

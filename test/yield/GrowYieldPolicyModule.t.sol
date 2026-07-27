@@ -236,6 +236,17 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
         assertEq(policyModule.accountExecutor(account), address(frozen));
     }
 
+    /// @dev An account that is its own executor would have the policy authorize a self-call,
+    ///      whose inner selector any installed fallback module could answer. Rejected at
+    ///      configuration so the calldata policy never has to consider the case.
+    function test_setExecutor_rejectsTheAccountItself() public {
+        vm.prank(account);
+        vm.expectRevert(IGrowYieldPolicyModule.InvalidConfiguration.selector);
+        policyModule.setExecutor(account);
+
+        assertEq(policyModule.accountExecutor(account), address(executor), "unchanged");
+    }
+
     function test_setExecutor_requiresInstalledPolicy() public {
         vm.prank(makeAddr("notInstalled"));
         vm.expectRevert(IGrowYieldPolicyModule.PolicyNotInstalled.selector);
