@@ -13,6 +13,7 @@ import {MorphoVaultV2Adapter} from "../../src/adapters/MorphoVaultV2Adapter.sol"
 import {
     AmountMode,
     IGrowYieldExecutor,
+    MAX_OPS,
     Operation,
     OperationKind
 } from "../../src/interfaces/IGrowYieldExecutor.sol";
@@ -152,15 +153,59 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         other.execute(ops);
     }
 
-    function test_pauseVaultDeposits_rejectsUnknownVenueAndNonGuardian() public {
-        vm.prank(makeAddr("notGuardian"));
-        vm.expectRevert(IGrowYieldExecutor.OnlyRiskGuardian.selector);
+    function test_pauseVaultDeposits_rejectsUnknownVenueAndUnauthorizedCaller() public {
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(IGrowYieldExecutor.NotAuthorizedToPause.selector);
         executor.pauseVaultDeposits(aaveVault);
 
         // A venue this registry never admitted fails loudly rather than recording a no-op pause.
         vm.prank(riskGuardian);
         vm.expectRevert(IGrowYieldExecutor.VenueNotAllowed.selector);
         executor.pauseVaultDeposits(makeAddr("typo"));
+    }
+
+    /// @dev A false-positive pause must not be an unrecoverable state. The guardian protects
+    ///      unilaterally; only the registry owner may re-expose accounts to the venue.
+    function test_pauseIsReversibleByGovernanceOnly() public {
+        vm.prank(riskGuardian);
+        executor.pauseVaultDeposits(aaveVault);
+        assertTrue(executor.depositsPaused(aaveVault));
+
+        // The guardian can protect but cannot re-expose.
+        vm.prank(riskGuardian);
+        vm.expectRevert(IGrowYieldExecutor.NotAuthorizedToPause.selector);
+        executor.unpauseVaultDeposits(aaveVault);
+
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(IGrowYieldExecutor.NotAuthorizedToPause.selector);
+        executor.unpauseVaultDeposits(aaveVault);
+
+        // The registry owner (governance for this executor) can.
+        vm.expectEmit(true, false, false, false, address(executor));
+        emit IGrowYieldExecutor.VaultDepositsUnpaused(aaveVault);
+        executor.unpauseVaultDeposits(aaveVault);
+        assertFalse(executor.depositsPaused(aaveVault));
+
+        underlying.mint(account, 10e6);
+        _approveMax(address(underlying));
+        _execute(_ops1(_op(aaveVault, OperationKind.DEPOSIT, 10e6)));
+        assertEq(aavePool.aToken().balanceOf(account), 10e6, "deposits work again");
+    }
+
+    /// @dev Governance can also pause directly, so protection does not depend on one hot key.
+    function test_registryOwnerCanAlsoPause() public {
+        executor.pauseVaultDeposits(aaveVault);
+        assertTrue(executor.depositsPaused(aaveVault));
+    }
+
+    function test_execute_rejectsOverlongBatch() public {
+        Operation[] memory ops = new Operation[](MAX_OPS + 1);
+        for (uint256 i; i < ops.length; ++i) {
+            ops[i] = _op(aaveVault, OperationKind.DEPOSIT, 1e6);
+        }
+        vm.prank(account);
+        vm.expectRevert(IGrowYieldExecutor.BatchTooLarge.selector);
+        executor.execute(ops);
     }
 
     /// @dev Pausing one venue must not affect other venues of the same protocol, which share
@@ -513,10 +558,6 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
     function test_riskGuardianPause_blocksDepositsButNotExits() public {
         _seedAave(100e6);
 
-        vm.prank(makeAddr("notGuardian"));
-        vm.expectRevert(IGrowYieldExecutor.OnlyRiskGuardian.selector);
-        executor.pauseVaultDeposits(aaveVault);
-
         vm.prank(riskGuardian);
         executor.pauseVaultDeposits(aaveVault);
         assertTrue(executor.depositsPaused(aaveVault));
@@ -587,12 +628,13 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
     }
 
     /// @dev Aave re-points a reserve's aToken only by dropping and re-initializing the reserve
-    ///      (`updateAToken` upgrades the proxy behind a fixed address), which strands the old
-    ///      aToken at the protocol level: the pool no longer manages it, so no caller can
-    ///      withdraw against it. Grow blocks the deposit on drift and leaves the stranded
-    ///      position untouched; the exit is closed by Aave, not by the executor. Drift is
-    ///      per-venue, so sibling reserves of the same pool and adapter keep working.
-    function test_aaveDrift_reserveRepointed_blocksDepositAndStrandsThatVenueOnly() public {
+    ///      (`updateAToken` upgrades the proxy behind a fixed address). Grow blocks the deposit
+    ///      on drift, because a deposit must never create a position in a token the registry
+    ///      never admitted. The exit stays open on Grow's side: the executor measures the
+    ///      pinned position token and the adapter derives nothing of its own, so whether the
+    ///      redemption succeeds is left entirely to the protocol. Drift is per-venue, so
+    ///      sibling reserves of the same pool and adapter are unaffected.
+    function test_aaveDrift_reserveRepointed_blocksDepositButNotExit() public {
         _seedAave(100e6);
 
         aaveDataProvider.setAToken(makeAddr("newAToken"));
@@ -603,13 +645,11 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         vm.expectRevert(IGrowYieldExecutor.VenueDrift.selector);
         _execute(depositOps);
 
-        // The drifted venue's exit is no longer serviceable, and nothing is swept or lost.
+        // Grow does not add a second reason for the exit to fail.
         _approveMax(address(aavePool.aToken()));
-        Operation[] memory exitOps = _ops1(_op(aaveVault, OperationKind.REDEEM, 100e6));
-        vm.expectRevert();
-        _execute(exitOps);
-        assertEq(aavePool.aToken().balanceOf(account), 100e6, "position untouched");
-        assertEq(underlying.balanceOf(account), 100e6, "deposit funds returned to account");
+        _execute(_ops1(_op(aaveVault, OperationKind.REDEEM, 100e6)));
+        assertEq(aavePool.aToken().balanceOf(account), 0, "position exited");
+        assertEq(underlying.balanceOf(account), 200e6, "deposit funds plus redemption");
 
         // A sibling reserve served by the same pool and adapter still round-trips.
         otherUnderlying.mint(account, 50e6);

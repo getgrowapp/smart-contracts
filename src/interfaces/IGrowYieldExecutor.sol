@@ -9,6 +9,11 @@ enum OperationKind {
     REDEEM
 }
 
+// Maximum operations in one `execute` batch. Single source of truth for batch size: the
+// executor enforces it directly and the policy library derives its calldata ceiling from it,
+// so the two can never drift apart.
+uint256 constant MAX_OPS = 4;
+
 /// @notice How an operation resolves its source amount.
 enum AmountMode {
     EXACT,
@@ -25,7 +30,10 @@ enum AmountMode {
 /// @param sourceToken Token pulled from the caller and verified against the venue's pinned pair.
 /// @param amount Exact source amount when `amountMode` is `EXACT`; otherwise it must be zero.
 /// @param amountMode Explicit source-amount resolution strategy.
-/// @param minAmountOut Owner-signed absolute floor for the output credited to the caller.
+/// @param minAmountOut Absolute floor for the output credited to the caller. Signed by
+///        whoever authorized the operation — for automation that is a policy owner (session
+///        key), not the account owner, so this bounds an honest signer's slippage and not a
+///        compromised one. `maxLossBps` is the defense that does not depend on the signer.
 struct Operation {
     address vault;
     OperationKind kind;
@@ -48,14 +56,20 @@ interface IGrowYieldExecutor {
         uint256 amountOut
     );
 
-    /// @notice Emitted when the immutable risk guardian permanently pauses a venue's deposits.
-    event VaultDepositsPaused(address indexed vault);
+    /// @notice Emitted when a venue's deposits are paused.
+    event VaultDepositsPaused(address indexed vault, address indexed by);
+
+    /// @notice Emitted when the registry owner re-enables a paused venue's deposits.
+    event VaultDepositsUnpaused(address indexed vault);
 
     /// @notice Constructor configuration is invalid.
     error Invalid();
 
     /// @notice `execute` received no operations.
     error EmptyBatch();
+
+    /// @notice `execute` received more than `MAX_OPS` operations.
+    error BatchTooLarge();
 
     /// @notice The registry has not admitted this venue, or not in this direction.
     error VenueNotAllowed();
@@ -84,30 +98,39 @@ interface IGrowYieldExecutor {
     /// @notice The amount mode or its associated amount is invalid for this operation.
     error InvalidAmountMode();
 
-    /// @notice A caller other than the immutable risk guardian attempted a pause.
-    error OnlyRiskGuardian();
+    /// @notice The caller may neither pause nor unpause this venue's deposits.
+    error NotAuthorizedToPause();
 
-    /// @notice New deposits into this venue have been permanently paused.
+    /// @notice New deposits into this venue are paused.
     error DepositsPaused();
 
-    /// @notice Permanently disable new deposits into a venue, for every caller.
-    /// @dev Redemptions remain available so callers can always exit supported positions. The
-    ///      venue must be admitted by this executor's registry, so a mistyped address fails
-    ///      loudly rather than recording a pause that protects nothing. Pausing one venue never
-    ///      affects other venues of the same protocol. There is no unpause.
-    /// @param vault Venue whose deposits are permanently disabled.
+    /// @notice Disable new deposits into a venue, for every caller.
+    /// @dev Callable by the immutable risk guardian (fast incident response) or by the registry
+    ///      owner (governance, so the pause does not depend on one hot key). Redemptions remain
+    ///      available so callers can always exit supported positions. The venue must be admitted
+    ///      by this executor's registry, so a mistyped address fails loudly rather than recording
+    ///      a pause that protects nothing. Pausing one venue never affects siblings.
+    /// @param vault Venue whose deposits are disabled.
     function pauseVaultDeposits(address vault) external;
 
-    /// @notice Venue registry this executor deployed and is permanently bound to.
+    /// @notice Re-enable deposits into a paused venue.
+    /// @dev Registry owner only — deliberately not the guardian. Protecting is fast and
+    ///      unilateral; re-exposing accounts to a venue is a governance decision. This is what
+    ///      keeps a false-positive pause from being an unrecoverable state.
+    /// @param vault Venue whose deposits are re-enabled.
+    function unpauseVaultDeposits(address vault) external;
+
+    /// @notice Venue registry this executor deployed and is permanently bound to. Its owner is
+    ///         the governance body for both venue admission and deposit un-pausing.
     function registry() external view returns (IGrowYieldAdapterRegistry);
 
     /// @notice Maximum accepted shortfall vs. adapter preview, in basis points.
     function maxLossBps() external view returns (uint16);
 
-    /// @notice Immutable address authorized to permanently pause venue deposits.
+    /// @notice Immutable address authorized to pause venue deposits.
     function riskGuardian() external view returns (address);
 
-    /// @notice Whether new deposits into a venue are permanently paused.
+    /// @notice Whether new deposits into a venue are currently paused.
     function depositsPaused(address vault) external view returns (bool);
 
     /// @notice Execute operations and credit every output directly to `msg.sender`.

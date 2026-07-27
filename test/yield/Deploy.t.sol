@@ -65,8 +65,9 @@ contract DeployTest is Test {
 
         // Every component pinned the same executor, which itself is ownerless.
         assertEq(GrowYieldExecutor(executor).riskGuardian(), RISK_GUARDIAN, "risk guardian");
-        // The module pins no executor: each account approves one at install time.
+        // The module pins neither executor nor paymaster: both are per-account install data.
         assertEq(GrowYieldPolicyModule(policyModule).accountExecutor(address(this)), address(0));
+        assertEq(GrowYieldPolicyModule(policyModule).accountPaymaster(address(this)), address(0));
         assertEq(IYieldAdapter(adapters[0]).executor(), executor, "adapter executor");
 
         // The executor deployed this registry and the two are permanently bound.
@@ -178,12 +179,10 @@ contract DeployTest is Test {
         );
         address executorAddr = _predict(params.executorSalt, params.executorInit);
 
-        // requiredPaymaster only needs code; this test contract suffices.
         params.policySalt = POLICY_SALT;
         params.policyInit = abi.encodePacked(
             type(GrowYieldPolicyModule).creationCode,
             abi.encode(
-                address(this),
                 uint128(500_000),
                 uint128(2_000_000),
                 uint256(150_000),

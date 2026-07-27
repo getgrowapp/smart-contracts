@@ -12,7 +12,12 @@ import {
 import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
 import {IGrowYieldPolicyModule} from "../../src/interfaces/IGrowYieldPolicyModule.sol";
 import {BaseModule} from "@erc6900/reference-implementation/modules/BaseModule.sol";
-import {Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
+import {
+    IGrowYieldExecutor,
+    MAX_OPS,
+    Operation,
+    OperationKind
+} from "../../src/interfaces/IGrowYieldExecutor.sol";
 import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
 import {MockValidationModule} from "./mocks/MockVaultV2Stack.sol";
 
@@ -41,7 +46,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
         view
         returns (PackedUserOperation memory userOp, bytes32 userOpHash)
     {
-        userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        userOp = _baseUserOp(_policyCall(_depositOps()));
         userOpHash = keccak256("valid-deposit");
         userOp = _authorize(userOp, userOpHash, key);
     }
@@ -53,10 +58,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
 
     function test_acceptsRedeemBatch() public {
         PackedUserOperation memory userOp = _baseUserOp(
-            _batch1(
-                address(aavePool.aToken()),
-                _ops1(_op(aaveVault, OperationKind.REDEEM, type(uint256).max))
-            )
+            _policyCall(_ops1(_op(aaveVault, OperationKind.REDEEM, type(uint256).max)))
         );
         bytes32 hash = keccak256("redeem");
         userOp = _authorize(userOp, hash);
@@ -64,12 +66,8 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
     }
 
     function test_acceptsTwoVenueReallocation() public {
-        address[] memory tokens = new address[](2);
-        tokens[0] = address(aavePool.aToken());
-        tokens[1] = address(underlying);
         PackedUserOperation memory userOp = _baseUserOp(
-            _batch(
-                tokens,
+            _policyCall(
                 _ops2(
                     _op(aaveVault, OperationKind.REDEEM, type(uint256).max),
                     _op(morphoVault, OperationKind.DEPOSIT, type(uint256).max)
@@ -134,9 +132,9 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
         address[] memory owners = new address[](1);
         owners[0] = otherOwner;
         vm.prank(otherAccount);
-        policyModule.onInstall(abi.encode(uint32(7), owners, address(executor)));
+        policyModule.onInstall(abi.encode(uint32(7), owners, address(executor), sponsorPaymaster));
 
-        PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        PackedUserOperation memory userOp = _baseUserOp(_policyCall(_depositOps()));
         userOp.sender = otherAccount;
         bytes32 hash = keccak256("other-account");
         userOp = _authorize(userOp, hash, otherKey);
@@ -228,7 +226,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
         owners[0] = replacement;
         vm.prank(account);
         vm.expectRevert(IGrowYieldPolicyModule.PolicyAlreadyInstalled.selector);
-        policyModule.onInstall(abi.encode(uint32(9), owners, address(executor)));
+        policyModule.onInstall(abi.encode(uint32(9), owners, address(executor), sponsorPaymaster));
 
         assertTrue(policyModule.isOwner(account, automation));
         assertFalse(policyModule.isOwner(account, replacement));
@@ -236,7 +234,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
 
         vm.startPrank(account);
         policyModule.onUninstall(hex"");
-        policyModule.onInstall(abi.encode(uint32(9), owners, address(executor)));
+        policyModule.onInstall(abi.encode(uint32(9), owners, address(executor), sponsorPaymaster));
         vm.stopPrank();
 
         assertFalse(policyModule.isOwner(account, automation));
@@ -280,20 +278,20 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
     }
 
     function test_returnsValidationDataWithoutTimeRange() public {
-        PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        PackedUserOperation memory userOp = _baseUserOp(_policyCall(_depositOps()));
         bytes32 hash = keccak256("no-time-range");
         userOp = _authorize(userOp, hash);
         assertEq(_validationResult(userOp, hash), 0);
     }
 
     function test_rejectsMalformedSignature_withoutRevert() public {
-        PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        PackedUserOperation memory userOp = _baseUserOp(_policyCall(_depositOps()));
         userOp.signature = hex"01";
         _assertInvalid(userOp, keccak256("malformed"));
     }
 
     function test_rejectsLegacy71ByteSignature() public {
-        PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        PackedUserOperation memory userOp = _baseUserOp(_policyCall(_depositOps()));
         bytes32 hash = keccak256("legacy-signature");
         userOp.signature =
             abi.encodePacked(bytes6(uint48(1)), _signAuthorization(automationPk, hash));
@@ -301,7 +299,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
     }
 
     function test_rejectsInitCode() public {
-        PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        PackedUserOperation memory userOp = _baseUserOp(_policyCall(_depositOps()));
         userOp.initCode = hex"01";
         bytes32 hash = keccak256("init-code");
         userOp = _authorize(userOp, hash);
@@ -309,7 +307,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
     }
 
     function test_rejectsWrongOrMissingPaymaster() public {
-        PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        PackedUserOperation memory userOp = _baseUserOp(_policyCall(_depositOps()));
         userOp.paymasterAndData = "";
         bytes32 hash = keccak256("missing-paymaster");
         userOp = _authorize(userOp, hash);
@@ -323,19 +321,19 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
     }
 
     function test_rejectsGasAndFeeFieldsAboveCaps() public {
-        PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        PackedUserOperation memory userOp = _baseUserOp(_policyCall(_depositOps()));
         userOp.preVerificationGas = MAX_PRE_VERIFICATION_GAS + 1;
         bytes32 hash = keccak256("high-pre-verification");
         userOp = _authorize(userOp, hash);
         _assertInvalid(userOp, hash);
 
-        userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        userOp = _baseUserOp(_policyCall(_depositOps()));
         userOp.gasFees = bytes32((uint256(MAX_PRIORITY_FEE) << 128) | uint256(MAX_FEE + 1));
         hash = keccak256("high-fee");
         userOp = _authorize(userOp, hash);
         _assertInvalid(userOp, hash);
 
-        userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        userOp = _baseUserOp(_policyCall(_depositOps()));
         userOp.accountGasLimits =
             bytes32((uint256(MAX_VERIFICATION_GAS + 1) << 128) | uint256(MAX_CALL_GAS));
         hash = keccak256("high-verification-gas");
@@ -344,7 +342,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
     }
 
     function test_rejectsPaymasterGasAboveCaps() public {
-        PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        PackedUserOperation memory userOp = _baseUserOp(_policyCall(_depositOps()));
         userOp.paymasterAndData = abi.encodePacked(
             sponsorPaymaster,
             uint128(MAX_PAYMASTER_VERIFICATION_GAS + 1),
@@ -356,7 +354,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
     }
 
     function test_rejectsOversizedPaymasterData() public {
-        PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
+        PackedUserOperation memory userOp = _baseUserOp(_policyCall(_depositOps()));
         userOp.paymasterAndData = bytes.concat(
             abi.encodePacked(sponsorPaymaster, uint128(100_000), uint128(100_000)), new bytes(461)
         );
@@ -380,32 +378,62 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
         _assertOwnerSignedPolicyRejection(abi.encodeCall(IModularAccount.executeBatch, (calls)));
     }
 
-    function test_rejectsWrongApprovalToken() public {
-        _assertOwnerSignedPolicyRejection(_batch1(address(otherUnderlying), _depositOps()));
-    }
-
     function test_rejectsNonExecutorTarget() public {
-        Call[] memory calls = new Call[](3);
-        calls[0] = Call(address(underlying), 0, _approve(address(executor), type(uint256).max));
-        calls[1] = Call(makeAddr("evil"), 0, _executeData(_depositOps()));
-        calls[2] = Call(address(underlying), 0, _approve(address(executor), 0));
-        _assertOwnerSignedPolicyRejection(abi.encodeCall(IModularAccount.executeBatch, (calls)));
+        _assertOwnerSignedPolicyRejection(
+            abi.encodeCall(
+                IModularAccount.execute, (makeAddr("evil"), 0, _executeData(_depositOps()))
+            )
+        );
     }
 
-    function test_rejectsEmptyAndOversizedOps() public {
-        _assertOwnerSignedPolicyRejection(_batch1(address(underlying), new Operation[](0)));
+    /// @dev Only `execute` on the executor. Any other function on it — even one that is
+    ///      access-controlled elsewhere — is outside what a policy owner may reach.
+    function test_rejectsNonExecuteSelectorOnTheExecutor() public {
+        _assertOwnerSignedPolicyRejection(
+            abi.encodeCall(
+                IModularAccount.execute,
+                (
+                    address(executor),
+                    0,
+                    abi.encodeCall(IGrowYieldExecutor.pauseVaultDeposits, (aaveVault))
+                )
+            )
+        );
+    }
 
-        Operation[] memory ops = new Operation[](5);
-        for (uint256 i; i < ops.length; ++i) {
-            ops[i] = _op(aaveVault, OperationKind.DEPOSIT, 1e6);
+    function test_rejectsValueBearingCall() public {
+        _assertOwnerSignedPolicyRejection(
+            abi.encodeCall(
+                IModularAccount.execute, (address(executor), 1 wei, _executeData(_depositOps()))
+            )
+        );
+    }
+
+    /// @dev Batch size is capped by the calldata ceiling the policy derives from `MAX_OPS`,
+    ///      rather than by decoding operations the executor is about to decode anyway.
+    function test_batchSizeIsCappedAtMaxOps() public {
+        Operation[] memory atLimit = new Operation[](MAX_OPS);
+        for (uint256 i; i < atLimit.length; ++i) {
+            atLimit[i] = _op(aaveVault, OperationKind.DEPOSIT, 1e6);
         }
-        _assertOwnerSignedPolicyRejection(_batch1(address(underlying), ops));
+        PackedUserOperation memory userOp = _baseUserOp(_policyCall(atLimit));
+        bytes32 hash = keccak256("at-limit");
+        userOp = _authorize(userOp, hash);
+        _assertValid(userOp, hash);
+
+        Operation[] memory overLimit = new Operation[](MAX_OPS + 1);
+        for (uint256 i; i < overLimit.length; ++i) {
+            overLimit[i] = _op(aaveVault, OperationKind.DEPOSIT, 1e6);
+        }
+        _assertOwnerSignedPolicyRejection(_policyCall(overLimit));
     }
 
-    function test_rejectsOperationWithoutAbsoluteOutputFloor() public {
-        Operation[] memory ops = _depositOps();
-        ops[0].minAmountOut = 0;
-        _assertOwnerSignedPolicyRejection(_batch1(address(underlying), ops));
+    /// @dev Trailing bytes decode to the same call but are still paid for by the sponsor, so
+    ///      the policy pins `callData` to the canonical encoding of what it inspected.
+    function test_rejectsPaddedCallData() public {
+        _assertOwnerSignedPolicyRejection(
+            abi.encodePacked(_policyCall(_depositOps()), bytes32(uint256(1)))
+        );
     }
 
     function test_malformedCallData_returnsFailure() public {

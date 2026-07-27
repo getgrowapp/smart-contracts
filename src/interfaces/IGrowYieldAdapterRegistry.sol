@@ -19,12 +19,15 @@ enum Protocol {
 ///      tokens from these, not from the adapter, and rejects the operation if the adapter's
 ///      current derivation has drifted away from them.
 /// @param adapter Protocol adapter that transacts with this venue.
+/// @param adapterCodeHash Adapter runtime code hash pinned when it first admitted a venue,
+///        carried here so the executor resolves a venue in one call instead of two.
 /// @param asset Underlying token pinned for this venue at admission.
 /// @param positionToken Position token pinned for this venue at admission.
 /// @param canDeposit Whether new deposits may be routed into this venue.
 /// @param canRedeem Whether redemptions may be routed out of this venue.
 struct Venue {
     address adapter;
+    bytes32 adapterCodeHash;
     address asset;
     address positionToken;
     bool canDeposit;
@@ -110,6 +113,10 @@ interface IGrowYieldAdapterRegistry {
 
     /// @notice Executor every admitted adapter must authorize.
     function executor() external view returns (address);
+
+    /// @notice Governance address for this registry. It admits venues, and the bound executor
+    ///         treats it as the authority allowed to re-enable a paused venue's deposits.
+    function owner() external view returns (address);
 
     /// @notice Admit venues authenticated by this registry's pinned registrars.
     /// @dev Append-only: an admitted venue's adapter, directions, and token pair are never

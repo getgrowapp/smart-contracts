@@ -19,6 +19,13 @@ import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 ///      The adapter pins no reserve, so it cannot detect a reserve whose aToken was re-pointed.
 ///      That binding lives in the registry, which pins each venue's `(asset, positionToken)`
 ///      pair at admission; the executor re-derives it here and fails closed on drift.
+///
+///      Deposit and redeem deliberately keep no accounting of their own. The executor measures
+///      the adapter's balance of the registry-pinned source token on both sides of the call and
+///      requires it to consume exactly what it was sent, so residuals and donation-sweeping are
+///      caught against the token the executor actually transferred. An adapter-side check would
+///      have to re-derive that token from the data provider, which is precisely the value that
+///      goes stale when a reserve is re-pointed.
 /// @custom:security-contact security@getgrowapp.co
 contract AaveV3Adapter is IYieldAdapter {
     using SafeERC20 for IERC20;
@@ -35,7 +42,6 @@ contract AaveV3Adapter is IYieldAdapter {
     error Invalid();
     error OnlyExecutor();
     error UnknownReserve();
-    error ResidualBalance();
 
     modifier onlyExecutor() {
         if (msg.sender != executor) revert OnlyExecutor();
@@ -83,16 +89,9 @@ contract AaveV3Adapter is IYieldAdapter {
         onlyExecutor
         returns (uint256)
     {
-        uint256 balanceBefore = IERC20(vault).balanceOf(address(this));
-
         IERC20(vault).forceApprove(address(pool), assets);
         pool.supply(vault, assets, receiver, 0);
         IERC20(vault).forceApprove(address(pool), 0);
-
-        // Exactly `assets` consumed; anything else means the pool misbehaved.
-        if (IERC20(vault).balanceOf(address(this)) != balanceBefore - assets) {
-            revert ResidualBalance();
-        }
 
         return assets;
     }
@@ -103,16 +102,7 @@ contract AaveV3Adapter is IYieldAdapter {
         onlyExecutor
         returns (uint256)
     {
-        IERC20 aToken = IERC20(_aToken(vault));
-        uint256 sharesBefore = aToken.balanceOf(address(this));
-        uint256 withdrawn = pool.withdraw(vault, shares, receiver);
-
-        // Consume the caller-attributed position amount. aToken burns settle in scaled
-        // units, so allow one wei of rounding; donations are still never swept.
-        uint256 consumed = sharesBefore - aToken.balanceOf(address(this));
-        if (consumed + 1 < shares || consumed > shares + 1) revert ResidualBalance();
-
-        return withdrawn;
+        return pool.withdraw(vault, shares, receiver);
     }
 
     /// @dev The reserve's current aToken; reverts if the pool lists no reserve for `vault`.

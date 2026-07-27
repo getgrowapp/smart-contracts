@@ -103,7 +103,9 @@ abstract contract GrowYieldTestBase is Test {
         address[] memory initialOwners = new address[](1);
         initialOwners[0] = automation;
         vm.prank(account);
-        policyModule.onInstall(abi.encode(POLICY_ENTITY_ID, initialOwners, address(executor)));
+        policyModule.onInstall(
+            abi.encode(POLICY_ENTITY_ID, initialOwners, address(executor), sponsorPaymaster)
+        );
     }
 
     /// @dev Deploys venue infrastructure, then the executor (which deploys its own registry),
@@ -126,7 +128,6 @@ abstract contract GrowYieldTestBase is Test {
         registry.addVaults(_defaultVaults());
 
         policyModule = new GrowYieldPolicyModule(
-            sponsorPaymaster,
             MAX_VERIFICATION_GAS,
             MAX_CALL_GAS,
             MAX_PRE_VERIFICATION_GAS,
@@ -313,28 +314,16 @@ abstract contract GrowYieldTestBase is Test {
             abi.encodeWithSelector(bytes4(keccak256("approve(address,uint256)")), spender, amount);
     }
 
-    /// @dev Canonical policy batch: approve-max, execute, then approve-zero per source token.
-    function _batch(address[] memory tokens, Operation[] memory ops)
-        internal
-        view
-        returns (bytes memory)
-    {
-        uint256 count = tokens.length;
-        Call[] memory calls = new Call[](2 * count + 1);
-
-        for (uint256 i; i < count; ++i) {
-            calls[i] = Call(tokens[i], 0, _approve(address(executor), type(uint256).max));
-            calls[count + 1 + i] = Call(tokens[i], 0, _approve(address(executor), 0));
-        }
-        calls[count] = Call(address(executor), 0, _executeData(ops));
-
-        return abi.encodeCall(IModularAccount.executeBatch, (calls));
+    /// @dev The one calldata shape the policy accepts: a single `execute` on the account
+    ///      forwarding to the executor. Allowances are standing and granted by the owner.
+    function _policyCall(Operation[] memory ops) internal view returns (bytes memory) {
+        return abi.encodeCall(IModularAccount.execute, (address(executor), 0, _executeData(ops)));
     }
 
-    function _batch1(address token, Operation[] memory ops) internal view returns (bytes memory) {
-        address[] memory tokens = new address[](1);
-        tokens[0] = token;
-        return _batch(tokens, ops);
+    /// @dev Standing allowance from `account` to the executor, as the owner would grant once.
+    function _approveExecutor(address token) internal {
+        vm.prank(account);
+        IERC20(token).approve(address(executor), type(uint256).max);
     }
 
     function _baseUserOp(bytes memory callData)

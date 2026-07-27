@@ -17,7 +17,6 @@
     }
   },
   "policyModule": {
-    "requiredPaymaster": "0x00000000000667F27D4DB42334ec11a25db7EBb4",
     "maxVerificationGas": 500000,
     "maxCallGas": 2000000,
     "maxPreVerificationGas": 150000,

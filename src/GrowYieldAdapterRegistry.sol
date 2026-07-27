@@ -149,6 +149,13 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
     }
 
     /// @inheritdoc IGrowYieldAdapterRegistry
+    /// @dev Disambiguates `Ownable`'s getter from the interface declaration; the bound executor
+    ///      reads this to decide who may re-enable a paused venue.
+    function owner() public view override(Ownable, IGrowYieldAdapterRegistry) returns (address) {
+        return Ownable.owner();
+    }
+
+    /// @inheritdoc IGrowYieldAdapterRegistry
     function venue(address vault) external view returns (Venue memory) {
         return _venues[vault];
     }
@@ -205,9 +212,10 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
         if (_positionClaimed[position]) revert DuplicateVenue();
 
         _requireCanonicalVenue(config.protocol, adapter, vault, asset, position);
-        _pinAdapter(adapter);
+        bytes32 codeHash = _pinAdapter(adapter);
 
-        _venues[vault] = Venue(adapter, asset, position, config.canDeposit, config.canRedeem);
+        _venues[vault] =
+            Venue(adapter, codeHash, asset, position, config.canDeposit, config.canRedeem);
         _protocols[vault] = config.protocol;
         _positionClaimed[position] = true;
         _vaults.push(vault);
@@ -218,15 +226,27 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
     }
 
     /// @dev Pins an adapter's runtime code hash on first admission and enforces it afterwards.
-    function _pinAdapter(address adapter) private {
+    function _pinAdapter(address adapter) private returns (bytes32 current) {
         bytes32 pinned = adapterCodeHash[adapter];
-        bytes32 current = adapter.codehash;
+        current = adapter.codehash;
         if (pinned == bytes32(0)) {
             adapterCodeHash[adapter] = current;
             emit AdapterPinned(adapter, current);
         } else if (pinned != current) {
             revert AdapterCodeChanged();
         }
+    }
+
+    /// @dev Reads an `address` getter from an adapter. An adapter of a different protocol simply
+    ///      has no such getter, so a mis-declared protocol surfaces as `RegistrarMismatch`
+    ///      instead of an undiagnosable decode revert in a governance transaction.
+    function _adapterWiring(address adapter, bytes4 selector) private view returns (address) {
+        (bool ok, bytes memory returned) = adapter.staticcall(abi.encodeWithSelector(selector));
+        if (!ok || returned.length != 32) revert RegistrarMismatch();
+
+        uint256 word = abi.decode(returned, (uint256));
+        if (word > type(uint160).max) revert RegistrarMismatch();
+        return address(uint160(word));
     }
 
     /// @dev Proves `vault` is a genuine venue of `protocol` using this registry's pinned
@@ -246,13 +266,17 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
         } else if (protocol == Protocol.EULER_EVK) {
             address factory = eulerEVaultFactory;
             if (factory == address(0)) revert UnsupportedProtocol();
-            if (IAdapterVenue(adapter).factory() != factory) revert RegistrarMismatch();
+            if (_adapterWiring(adapter, IAdapterVenue.factory.selector) != factory) {
+                revert RegistrarMismatch();
+            }
             if (!IEulerEVaultFactory(factory).isProxy(vault)) revert NotCanonicalVenue();
             _requireErc4626Venue(vault, asset, position);
         } else if (protocol == Protocol.EULER_EARN) {
             address factory = eulerEarnFactory;
             if (factory == address(0)) revert UnsupportedProtocol();
-            if (IAdapterVenue(adapter).factory() != factory) revert RegistrarMismatch();
+            if (_adapterWiring(adapter, IAdapterVenue.factory.selector) != factory) {
+                revert RegistrarMismatch();
+            }
             if (!IEulerEarnFactory(factory).isVault(vault)) revert NotCanonicalVenue();
             _requireErc4626Venue(vault, asset, position);
         } else {
@@ -271,8 +295,8 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
         address provider = aaveDataProvider;
         if (pool == address(0)) revert UnsupportedProtocol();
         if (
-            IAdapterVenue(adapter).pool() != pool
-                || IAdapterVenue(adapter).dataProvider() != provider
+            _adapterWiring(adapter, IAdapterVenue.pool.selector) != pool
+                || _adapterWiring(adapter, IAdapterVenue.dataProvider.selector) != provider
         ) revert RegistrarMismatch();
 
         if (asset != vault) revert NotCanonicalVenue();
@@ -294,7 +318,9 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
         address vaultFactory = morphoVaultFactory;
         address eligibility = morphoEligibility;
         if (vaultFactory == address(0)) revert UnsupportedProtocol();
-        if (IAdapterVenue(adapter).eligibility() != eligibility) revert RegistrarMismatch();
+        if (_adapterWiring(adapter, IAdapterVenue.eligibility.selector) != eligibility) {
+            revert RegistrarMismatch();
+        }
 
         if (!IVaultV2Factory(vaultFactory).isVaultV2(vault)) revert NotCanonicalVenue();
 
@@ -337,7 +363,9 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
     ) private view {
         address comptroller = capyFiComptroller;
         if (comptroller == address(0)) revert UnsupportedProtocol();
-        if (IAdapterVenue(adapter).comptroller() != comptroller) revert RegistrarMismatch();
+        if (_adapterWiring(adapter, IAdapterVenue.comptroller.selector) != comptroller) {
+            revert RegistrarMismatch();
+        }
 
         (bool isListed,,) = ICapyFiComptroller(comptroller).markets(vault);
         if (

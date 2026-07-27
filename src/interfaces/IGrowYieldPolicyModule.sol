@@ -17,6 +17,9 @@ interface IGrowYieldPolicyModule is IValidationModule {
     /// @notice Emitted when an account sets the single executor its policy batches may call.
     event ExecutorSet(address indexed account, address indexed executor);
 
+    /// @notice Emitted when an account sets the paymaster it accepts as its sponsor.
+    event PaymasterSet(address indexed account, address indexed paymaster);
+
     /// @notice The owner set, executor, or constructor policy is invalid.
     error InvalidConfiguration();
 
@@ -67,8 +70,15 @@ interface IGrowYieldPolicyModule is IValidationModule {
     /// @notice Yield executor `account` approved; zero until the account installs the policy.
     function accountExecutor(address account) external view returns (address);
 
-    /// @notice Paymaster required for every policy-authorized UserOperation.
-    function requiredPaymaster() external view returns (address);
+    /// @notice Replace the paymaster the calling account accepts as sponsor for policy
+    ///         UserOperations.
+    /// @dev Owner path only, like `setExecutor`. Per-account rather than a protocol-wide
+    ///      immutable so that retiring or rotating a sponsor is one signature per account
+    ///      instead of a module reinstall, and so one depleted sponsor cannot halt everyone.
+    function setPaymaster(address paymaster) external;
+
+    /// @notice Paymaster `account` accepts as its sponsor; zero until the policy is installed.
+    function accountPaymaster(address account) external view returns (address);
 
     /// @notice Maximum account verification gas accepted by the policy.
     function maxVerificationGas() external view returns (uint128);

@@ -157,7 +157,6 @@ contract Deploy is Script {
         return abi.encodePacked(
             type(GrowYieldPolicyModule).creationCode,
             abi.encode(
-                vm.parseJsonAddress(config, ".policyModule.requiredPaymaster"),
                 vm.parseJsonUint(config, ".policyModule.maxVerificationGas").toUint128(),
                 vm.parseJsonUint(config, ".policyModule.maxCallGas").toUint128(),
                 vm.parseJsonUint(config, ".policyModule.maxPreVerificationGas"),
@@ -337,11 +336,11 @@ contract Deploy is Script {
             "wrong risk guardian"
         );
 
+        // The module pins no executor and no paymaster: both are per-account install data.
         GrowYieldPolicyModule policy = GrowYieldPolicyModule(policyModule);
         require(
-            policy.requiredPaymaster()
-                == vm.parseJsonAddress(config, ".policyModule.requiredPaymaster"),
-            "wrong required paymaster"
+            policy.maxCallGas() == vm.parseJsonUint(config, ".policyModule.maxCallGas").toUint128(),
+            "wrong policy call-gas ceiling"
         );
     }
 
