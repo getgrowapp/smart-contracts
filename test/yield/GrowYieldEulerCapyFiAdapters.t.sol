@@ -357,6 +357,48 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
         assertEq(capyAdapter.previewDeposit(capyVault, assets), expected);
     }
 
+    /// @dev Compound accrues interest inside `mint`, and accrual only ever raises the exchange
+    ///      rate, so quoting `exchangeRateStored` on a market that has not been touched lately
+    ///      promises more shares than the mint delivers. Past `maxLossBps` of drift the executor
+    ///      rejects the deposit outright — a dormant market that silently stops accepting
+    ///      deposits. The preview must therefore replay accrual.
+    function test_capy_previewAccruesInterestLikeMint() public {
+        // An existing supply base, then 50% utilisation at a deliberately brisk per-block rate.
+        capyMarket.caToken().mintShares(makeAddr("existingSupplier"), 1e13);
+        capyMarket.caToken().setBorrowState(100_000e6, 100_000e6, 1e11, 0.15e18);
+        uint256 staleRate = capyMarket.caToken().exchangeRateStored();
+
+        vm.roll(block.number + 2_000_000);
+
+        uint256 assets = 100e6;
+        uint256 stalePreview = (assets * 1e18) / staleRate;
+        uint256 accruedPreview = capyAdapter.previewDeposit(capyVault, assets);
+
+        assertLt(accruedPreview, stalePreview, "accrual reduces the shares a deposit earns");
+        // The drift is wider than the loss cap, so the stale preview would have failed closed.
+        assertLt(
+            accruedPreview * 10_000 / stalePreview,
+            10_000 - MAX_LOSS_BPS,
+            "stale preview would breach the loss cap"
+        );
+
+        underlying.mint(account, assets);
+        _approveMax(address(underlying));
+        uint256[] memory received = _execute(_ops1(_op(capyVault, OperationKind.DEPOSIT, assets)));
+
+        assertEq(received[0], accruedPreview, "preview matched what mint actually paid");
+    }
+
+    /// @dev A market with no borrows cannot accrue, so the stored rate is already exact and the
+    ///      replay must not perturb it.
+    function test_capy_previewMatchesStoredRateWithoutBorrows() public {
+        vm.roll(block.number + 1_000_000);
+
+        uint256 assets = 100e6;
+        uint256 expected = (assets * 1e18) / capyMarket.caToken().exchangeRateStored();
+        assertEq(capyAdapter.previewDeposit(capyVault, assets), expected);
+    }
+
     function test_evault_previewDelegatesToVault() public view {
         assertEq(evaultAdapter.previewDeposit(evaultVault, 100e6), evault.previewDeposit(100e6));
         assertEq(evaultAdapter.previewRedeem(evaultVault, 50e6), evault.previewRedeem(50e6));

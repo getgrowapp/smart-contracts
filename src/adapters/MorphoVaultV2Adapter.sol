@@ -20,6 +20,9 @@ import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 ///      allocator can still move: that liquidity routes to `adapters(0)` with empty data, that the
 ///      child is still eligible, and the caller's current round-trip gates. Later gate changes,
 ///      liquidity, or venue governance can still impair exits.
+///
+///      Residual accounting lives in the executor, which measures this adapter's balance of the
+///      registry-pinned tokens on both sides of the call.
 /// @custom:security-contact security@getgrowapp.co
 contract MorphoVaultV2Adapter is IYieldAdapter {
     using SafeERC20 for IERC20;
@@ -34,8 +37,6 @@ contract MorphoVaultV2Adapter is IYieldAdapter {
     error OnlyExecutor();
     error VenueDrift();
     error VenueGate();
-    error NonCompliantVault();
-    error ResidualBalance();
 
     modifier onlyExecutor() {
         if (msg.sender != executor) revert OnlyExecutor();
@@ -84,22 +85,10 @@ contract MorphoVaultV2Adapter is IYieldAdapter {
         _checkDepositGates(vault, receiver);
 
         address underlying = IERC4626(vault).asset();
-        uint256 balanceBefore = IERC20(underlying).balanceOf(address(this));
-        uint256 sharesBefore = IERC20(vault).balanceOf(receiver);
 
         IERC20(underlying).forceApprove(vault, assets);
         uint256 shares = IERC4626(vault).deposit(assets, receiver);
         IERC20(underlying).forceApprove(vault, 0);
-
-        // Strict ERC-4626 conformance: reported shares must equal the receiver's delta.
-        if (IERC20(vault).balanceOf(receiver) - sharesBefore != shares) {
-            revert NonCompliantVault();
-        }
-
-        // Exactly `assets` consumed; anything else means the vault misbehaved.
-        if (IERC20(underlying).balanceOf(address(this)) != balanceBefore - assets) {
-            revert ResidualBalance();
-        }
 
         return shares;
     }
@@ -114,16 +103,8 @@ contract MorphoVaultV2Adapter is IYieldAdapter {
         if (!wrapper.canSendShares(address(this)) || !wrapper.canReceiveAssets(receiver)) {
             revert VenueGate();
         }
-        uint256 sharesBefore = IERC20(vault).balanceOf(address(this));
 
-        uint256 assetsOut = IERC4626(vault).redeem(shares, receiver, address(this));
-
-        // Exactly `shares` consumed; anything else means the vault misbehaved.
-        if (IERC20(vault).balanceOf(address(this)) != sharesBefore - shares) {
-            revert ResidualBalance();
-        }
-
-        return assetsOut;
+        return IERC4626(vault).redeem(shares, receiver, address(this));
     }
 
     /// @dev Re-checks the mutable half of admission: liquidity must still route to the wrapper's

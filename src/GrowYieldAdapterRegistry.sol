@@ -42,8 +42,12 @@ import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 ///      expressed by calling `addVaults` at all.
 ///
 ///      Admission also pins each venue's token pair, because adapters are venue-agnostic; the
-///      executor rejects an operation whose adapter no longer derives the same. Adapters must be
-///      direct, non-upgradeable deployments, as their code hash is pinned on first admission.
+///      executor rejects an operation whose adapter no longer derives the same.
+///
+///      Adapters must be direct, non-upgradeable deployments. That is an obligation on whoever
+///      calls `addVaults`, not something this contract can verify: the pinned code hash catches
+///      an EIP-7702 delegated EOA re-pointing itself, but a proxy's own code never changes when
+///      its implementation does, so admitting one silently forfeits the guarantee.
 /// @custom:security-contact security@getgrowapp.co
 abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
     /// @notice Aave V3 pool every admitted Aave adapter must supply to.
@@ -130,16 +134,6 @@ abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterReg
     /// @inheritdoc IGrowYieldAdapterRegistry
     function venue(address vault) external view returns (Venue memory) {
         return _venues[vault];
-    }
-
-    /// @inheritdoc IGrowYieldAdapterRegistry
-    function canDeposit(address vault) external view returns (bool) {
-        return _venues[vault].canDeposit;
-    }
-
-    /// @inheritdoc IGrowYieldAdapterRegistry
-    function canRedeem(address vault) external view returns (bool) {
-        return _venues[vault].canRedeem;
     }
 
     /// @inheritdoc IGrowYieldAdapterRegistry

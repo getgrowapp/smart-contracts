@@ -221,6 +221,119 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         assertFalse(executor.depositsPaused(aaveVault));
     }
 
+    /// @dev A stack-wide incident must not cost one transaction per venue. Operations are built
+    ///      before arming `expectRevert`, because `_op` reads the venue through the executor and
+    ///      that external call would otherwise consume the cheatcode.
+    function test_pauseAllDeposits_haltsEveryVenueButNotExits() public {
+        underlying.mint(account, 20e6);
+        otherUnderlying.mint(account, 10e6);
+        _approveMax(address(underlying));
+        _approveMax(address(otherUnderlying));
+        _execute(_ops1(_op(aaveVault, OperationKind.DEPOSIT, 10e6)));
+
+        Operation[] memory intoFirst = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 10e6));
+        Operation[] memory intoSecond = _ops1(_op(aaveVaultOther, OperationKind.DEPOSIT, 10e6));
+        Operation[] memory exit = _ops1(_op(aaveVault, OperationKind.REDEEM, 5e6));
+
+        vm.prank(riskGuardian);
+        vm.expectEmit(true, false, false, false, address(executor));
+        emit IGrowYieldExecutor.AllDepositsPaused(riskGuardian);
+        executor.pauseAllDeposits();
+        assertTrue(executor.allDepositsPaused());
+
+        vm.prank(account);
+        vm.expectRevert(IGrowYieldExecutor.DepositsPaused.selector);
+        executor.execute(intoFirst);
+
+        vm.prank(account);
+        vm.expectRevert(IGrowYieldExecutor.DepositsPaused.selector);
+        executor.execute(intoSecond);
+
+        // Exits are never pausable, blanket pause included.
+        _approveMax(address(aavePool.aToken()));
+        vm.prank(account);
+        executor.execute(exit);
+
+        vm.prank(riskGuardian);
+        executor.unpauseAllDeposits();
+        vm.prank(account);
+        executor.execute(intoFirst);
+    }
+
+    /// @dev The blanket flag and the per-venue flags are independent; lifting one leaves the
+    ///      other in force, so a venue paused for its own reasons does not silently reopen.
+    function test_blanketAndPerVenuePausesAreIndependent() public {
+        underlying.mint(account, 10e6);
+        _approveMax(address(underlying));
+        Operation[] memory ops = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 10e6));
+
+        vm.startPrank(riskGuardian);
+        executor.pauseVaultDeposits(aaveVault);
+        executor.pauseAllDeposits();
+        executor.unpauseAllDeposits();
+        vm.stopPrank();
+
+        assertFalse(executor.allDepositsPaused());
+        assertTrue(executor.depositsPaused(aaveVault), "venue pause survived");
+
+        vm.prank(account);
+        vm.expectRevert(IGrowYieldExecutor.DepositsPaused.selector);
+        executor.execute(ops);
+    }
+
+    function test_pauseAllDeposits_guardianOnly() public {
+        address stranger = makeAddr("stranger");
+
+        vm.expectRevert(IGrowYieldExecutor.NotAuthorizedToPause.selector);
+        executor.pauseAllDeposits();
+
+        vm.prank(stranger);
+        vm.expectRevert(IGrowYieldExecutor.NotAuthorizedToPause.selector);
+        executor.unpauseAllDeposits();
+    }
+
+    /// @dev An unreplaceable guardian turns one lost key into a deployment that can never
+    ///      respond to an incident again.
+    function test_setRiskGuardian_rotatesAuthority() public {
+        address next = makeAddr("nextGuardian");
+
+        vm.expectEmit(true, true, false, false, address(executor));
+        emit IGrowYieldExecutor.RiskGuardianSet(riskGuardian, next);
+        executor.setRiskGuardian(next);
+        assertEq(executor.riskGuardian(), next);
+
+        vm.prank(riskGuardian);
+        vm.expectRevert(IGrowYieldExecutor.NotAuthorizedToPause.selector);
+        executor.pauseVaultDeposits(aaveVault);
+
+        vm.prank(next);
+        executor.pauseVaultDeposits(aaveVault);
+        assertTrue(executor.depositsPaused(aaveVault));
+    }
+
+    function test_setRiskGuardian_ownerOnlyAndNeverTheOwner() public {
+        address next = makeAddr("next");
+        address currentOwner = executor.owner();
+
+        vm.prank(riskGuardian);
+        vm.expectRevert(
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, riskGuardian)
+        );
+        executor.setRiskGuardian(next);
+
+        vm.expectRevert(IGrowYieldAdapterRegistry.Invalid.selector);
+        executor.setRiskGuardian(address(0));
+
+        // Collapsing the two authorities into one key is rejected from both directions.
+        vm.expectRevert(IGrowYieldAdapterRegistry.Invalid.selector);
+        executor.setRiskGuardian(currentOwner);
+
+        executor.transferOwnership(riskGuardian);
+        vm.prank(riskGuardian);
+        vm.expectRevert(IGrowYieldAdapterRegistry.Invalid.selector);
+        executor.acceptOwnership();
+    }
+
     function test_execute_rejectsOverlongBatch() public {
         Operation[] memory ops = new Operation[](MAX_OPS + 1);
         for (uint256 i; i < ops.length; ++i) {

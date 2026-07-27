@@ -213,8 +213,9 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
         returns (bool)
     {
         address accountExecutor_ = _accountConfigs[account].executor;
-        return accountExecutor_ != address(0)
-            && GrowYieldPolicyLib.isAllowed(account, accountExecutor_, callData);
+        return
+            accountExecutor_ != address(0)
+                && GrowYieldPolicyLib.isAllowed(accountExecutor_, callData);
     }
 
     /// @inheritdoc IValidationModule
@@ -300,7 +301,11 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
     ///      therefore answer the executor surface coherently. That is a typo filter, not a trust
     ///      boundary: an owner determined to approve a hostile contract still can.
     function _setExecutor(address account, address executor) private {
-        if (executor.code.length == 0) revert InvalidConfiguration();
+        // An account that is its own executor would have the policy authorize a self-call, whose
+        // inner selector any installed fallback module could answer — reaching account surface
+        // the yield policy never intended to expose. Rejected here, once, so the calldata policy
+        // does not have to re-derive the same invariant on every validation.
+        if (executor.code.length == 0 || executor == account) revert InvalidConfiguration();
 
         try IGrowYieldExecutor(executor).vaultCount() returns (uint256 vaults) {
             // An executor with no admitted venue is unusable, so approving one is always a

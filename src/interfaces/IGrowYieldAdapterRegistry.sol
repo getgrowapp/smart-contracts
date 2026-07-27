@@ -107,8 +107,9 @@ interface IGrowYieldAdapterRegistry {
     /// @notice Another admitted venue already holds this venue's position token.
     error DuplicateVenue();
 
-    /// @notice The adapter's runtime code no longer matches the hash pinned on first admission.
-    ///         Checked at admission and again on every operation.
+    /// @notice The adapter's runtime code no longer matches the hash pinned on first admission,
+    ///         which in practice means an EIP-7702 delegated EOA re-pointed itself. Checked at
+    ///         admission and again on every operation.
     error AdapterCodeChanged();
 
     /// @notice Admit venues authenticated by this registry's pinned registrars.
@@ -118,13 +119,8 @@ interface IGrowYieldAdapterRegistry {
     function addVaults(VaultConfig[] calldata vaults) external;
 
     /// @notice Resolved venue record for `vault`; `adapter` is zero if it is not admitted.
+    /// @dev Carries `canDeposit` and `canRedeem`, so there are no separate direction getters.
     function venue(address vault) external view returns (Venue memory);
-
-    /// @notice True if new deposits may be routed into `vault`.
-    function canDeposit(address vault) external view returns (bool);
-
-    /// @notice True if redemptions may be routed out of `vault`.
-    function canRedeem(address vault) external view returns (bool);
 
     /// @notice Adapter admitted for `vault`; zero if it is not admitted.
     function vaultAdapter(address vault) external view returns (address);

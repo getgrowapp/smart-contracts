@@ -34,12 +34,10 @@ library GrowYieldPolicyLib {
     // forge-lint: disable-next-line(divide-before-multiply)
     uint256 private constant MAX_CALLDATA_LENGTH = 132 + ((MAX_INNER_LENGTH + 31) / 32) * 32;
 
-    /// @notice True if `callData` is the canonical single executor call for `account`.
-    function isAllowed(address account, address executor, bytes calldata callData)
-        internal
-        pure
-        returns (bool)
-    {
+    /// @notice True if `callData` is the canonical single call to `executor`.
+    /// @dev `executor` is never the account itself; `GrowYieldPolicyModule._setExecutor` rejects
+    ///      that at configuration, so this does not re-check it.
+    function isAllowed(address executor, bytes calldata callData) internal pure returns (bool) {
         if (
             callData.length < 4 || callData.length > MAX_CALLDATA_LENGTH
                 || bytes4(callData[:4]) != IModularAccount.execute.selector
@@ -48,7 +46,7 @@ library GrowYieldPolicyLib {
         (address target, uint256 value, bytes memory data) =
             abi.decode(callData[4:], (address, uint256, bytes));
 
-        return target == executor && target != account && value == 0 && data.length >= 4
+        return target == executor && value == 0 && data.length >= 4
             // Truncation is the intent: the leading four bytes are the selector, and
             // `data.length >= 4` above guarantees they exist.
             // forge-lint: disable-next-line(unsafe-typecast)

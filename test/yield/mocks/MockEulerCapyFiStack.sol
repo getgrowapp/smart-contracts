@@ -78,6 +78,15 @@ contract MockCapyFiCaToken is ERC20, ICapyFiCaToken {
     uint256 public exchangeRateStored = 2e16; // 0.02 underlying per caToken
     uint256 public mintErrorCode;
     uint256 public redeemErrorCode;
+
+    // Compound accrual surface. Dormant by default (no borrows), so the stored rate is exact
+    // until a test opts in with `setBorrowState`.
+    uint256 public accrualBlockNumber = block.number;
+    uint256 public borrowRatePerBlock;
+    uint256 public totalBorrows;
+    uint256 public totalReserves;
+    uint256 public reserveFactorMantissa;
+    uint256 public cash;
     address public underlyingOverride;
     bool public useUnderlyingOverride;
     address public comptrollerOverride;
@@ -86,6 +95,44 @@ contract MockCapyFiCaToken is ERC20, ICapyFiCaToken {
     constructor(address comptroller_, address underlying_) ERC20("Mock caToken", "caMOCK") {
         _comptroller = comptroller_;
         _underlying = underlying_;
+    }
+
+    /// @dev Switches the market into a borrowing state so interest actually accrues, and pins
+    ///      `cash`/`totalSupply` so `exchangeRateStored` derives from Compound's own formula.
+    function setBorrowState(
+        uint256 cash_,
+        uint256 borrows_,
+        uint256 ratePerBlock,
+        uint256 reserveFactor
+    ) external {
+        cash = cash_;
+        totalBorrows = borrows_;
+        borrowRatePerBlock = ratePerBlock;
+        reserveFactorMantissa = reserveFactor;
+        accrualBlockNumber = block.number;
+        _syncRate();
+    }
+
+    function getCash() external view returns (uint256) {
+        return cash;
+    }
+
+    /// @dev Compound's `accrueInterest`, run for real so `mint` and `redeem` use the accrued
+    ///      rate while `exchangeRateStored` stays behind until something touches the market.
+    function accrueInterest() public {
+        uint256 blocks = block.number - accrualBlockNumber;
+        if (blocks == 0 || totalBorrows == 0) return;
+
+        uint256 interest = Math.mulDiv(borrowRatePerBlock * blocks, totalBorrows, 1e18);
+        totalBorrows += interest;
+        totalReserves += Math.mulDiv(reserveFactorMantissa, interest, 1e18);
+        accrualBlockNumber = block.number;
+        _syncRate();
+    }
+
+    function _syncRate() private {
+        if (totalSupply() == 0 || cash == 0) return;
+        exchangeRateStored = Math.mulDiv(cash + totalBorrows - totalReserves, 1e18, totalSupply());
     }
 
     function setMintErrorCode(uint256 code) external {
@@ -118,6 +165,7 @@ contract MockCapyFiCaToken is ERC20, ICapyFiCaToken {
 
     function mint(uint256 mintAmount) external returns (uint256) {
         if (mintErrorCode != 0) return mintErrorCode;
+        accrueInterest(); // Compound accrues before quoting, which is the whole point.
         IERC20(_underlying).safeTransferFrom(msg.sender, address(this), mintAmount);
         uint256 shares = Math.mulDiv(mintAmount, 1e18, exchangeRateStored);
         _mint(msg.sender, shares);
@@ -126,6 +174,7 @@ contract MockCapyFiCaToken is ERC20, ICapyFiCaToken {
 
     function redeem(uint256 redeemTokens) external returns (uint256) {
         if (redeemErrorCode != 0) return redeemErrorCode;
+        accrueInterest();
         uint256 assets = Math.mulDiv(redeemTokens, exchangeRateStored, 1e18);
         _burn(msg.sender, redeemTokens);
         IERC20(_underlying).safeTransfer(msg.sender, assets);

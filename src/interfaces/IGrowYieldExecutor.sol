@@ -9,8 +9,13 @@ enum OperationKind {
     REDEEM
 }
 
-// Maximum operations in one `execute` batch. Single source of truth: the executor enforces it
-// directly and the policy library derives its calldata ceiling from it.
+// Maximum operations in one `execute` batch, sized for the intended shapes: a deposit or a
+// withdrawal is one operation, a reallocation is two, and four covers a two-venue rebalance.
+// What bounds it now is execution gas under the sponsor's call-gas ceiling, since each operation
+// makes several external balance reads plus a preview. It was originally a validation-phase
+// bound, which no longer applies: the policy library stopped decoding operations, so validation
+// cost barely moves with batch size. Single source of truth either way — the executor enforces
+// this directly and the policy library derives its calldata ceiling from it.
 uint256 constant MAX_OPS = 4;
 
 /// @notice How an operation resolves its source amount.
@@ -59,8 +64,17 @@ interface IGrowYieldExecutor is IGrowYieldAdapterRegistry {
     /// @notice Emitted when a venue's deposits are paused.
     event VaultDepositsPaused(address indexed vault, address indexed by);
 
-    /// @notice Emitted when the registry owner re-enables a paused venue's deposits.
+    /// @notice Emitted when a paused venue's deposits are re-enabled.
     event VaultDepositsUnpaused(address indexed vault);
+
+    /// @notice Emitted when deposits are paused across every venue at once.
+    event AllDepositsPaused(address indexed by);
+
+    /// @notice Emitted when the blanket deposit pause is lifted.
+    event AllDepositsUnpaused(address indexed by);
+
+    /// @notice Emitted whenever the risk guardian is assigned or rotated.
+    event RiskGuardianSet(address indexed previousGuardian, address indexed newGuardian);
 
     /// @notice `execute` received more than `MAX_OPS` operations.
     error BatchTooLarge();
@@ -107,6 +121,27 @@ interface IGrowYieldExecutor is IGrowYieldAdapterRegistry {
     ///      from the owner's authority over the venue set.
     /// @param vault Venue whose deposits are re-enabled.
     function unpauseVaultDeposits(address vault) external;
+
+    /// @notice Disable new deposits into every venue at once.
+    /// @dev Risk guardian only. An incident that implicates the stack rather than one venue
+    ///      should not cost one transaction per venue. Redemptions stay available everywhere,
+    ///      and per-venue pauses are independent of this flag — lifting one does not lift both.
+    function pauseAllDeposits() external;
+
+    /// @notice Lift the blanket deposit pause.
+    /// @dev Risk guardian only. Venues paused individually remain paused.
+    function unpauseAllDeposits() external;
+
+    /// @notice Replace the risk guardian.
+    /// @dev Registry owner only, and the new guardian may be neither zero nor the owner, so the
+    ///      two authorities can never collapse into one key. Rotation exists because an
+    ///      unreplaceable guardian turns one lost key into a deployment that can never respond
+    ///      to an incident again.
+    /// @param guardian Address that takes over the deposit-pause lifecycle.
+    function setRiskGuardian(address guardian) external;
+
+    /// @notice Whether deposits are currently paused across every venue.
+    function allDepositsPaused() external view returns (bool);
 
     /// @notice Maximum accepted shortfall vs. adapter preview, in basis points.
     function maxLossBps() external view returns (uint16);

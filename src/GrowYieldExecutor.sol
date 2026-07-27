@@ -44,7 +44,12 @@ contract GrowYieldExecutor is
     uint16 public immutable maxLossBps;
 
     /// @inheritdoc IGrowYieldExecutor
-    address public immutable riskGuardian;
+    /// @dev Rotatable by the owner. A guardian that cannot be replaced turns a lost key into a
+    ///      deployment with no incident response for the rest of its life.
+    address public riskGuardian;
+
+    /// @inheritdoc IGrowYieldExecutor
+    bool public allDepositsPaused;
 
     /// @inheritdoc IGrowYieldExecutor
     mapping(address vault => bool) public depositsPaused;
@@ -58,8 +63,8 @@ contract GrowYieldExecutor is
     ///        venue rounding against the preview cannot brick operations.
     /// @param riskGuardian_ Sole address able to pause and un-pause venue deposits; must differ
     ///        from `owner_` so the two authorities stay disjoint.
-    /// @param owner_ Address authorized to admit venues; should be a Safe or
-    ///        TimelockController.
+    /// @param owner_ Address authorized to admit venues and rotate the guardian; should be a
+    ///        Safe or TimelockController.
     /// @param registrars_ Canonical protocol registrars pinned for this contract's lifetime.
     constructor(
         uint16 maxLossBps_,
@@ -67,13 +72,31 @@ contract GrowYieldExecutor is
         address owner_,
         IGrowYieldAdapterRegistry.Registrars memory registrars_
     ) GrowYieldAdapterRegistry(owner_, registrars_) {
-        if (
-            maxLossBps_ == 0 || maxLossBps_ > MAX_LOSS_BPS_CEILING || riskGuardian_ == address(0)
-                || riskGuardian_ == owner_
-        ) revert Invalid();
+        if (maxLossBps_ == 0 || maxLossBps_ > MAX_LOSS_BPS_CEILING) revert Invalid();
 
         maxLossBps = maxLossBps_;
-        riskGuardian = riskGuardian_;
+        _setRiskGuardian(riskGuardian_);
+    }
+
+    /// @inheritdoc IGrowYieldExecutor
+    function setRiskGuardian(address guardian) external onlyOwner {
+        _setRiskGuardian(guardian);
+    }
+
+    /// @inheritdoc IGrowYieldExecutor
+    function pauseAllDeposits() external onlyGuardian {
+        if (!allDepositsPaused) {
+            allDepositsPaused = true;
+            emit AllDepositsPaused(msg.sender);
+        }
+    }
+
+    /// @inheritdoc IGrowYieldExecutor
+    function unpauseAllDeposits() external onlyGuardian {
+        if (allDepositsPaused) {
+            allDepositsPaused = false;
+            emit AllDepositsUnpaused(msg.sender);
+        }
     }
 
     /// @inheritdoc IGrowYieldExecutor
@@ -128,9 +151,12 @@ contract GrowYieldExecutor is
 
         bool venuePermits = isDeposit ? venue.canDeposit : venue.canRedeem;
         if (venue.adapter == address(0) || !venuePermits) revert VenueNotAllowed();
-        if (isDeposit && depositsPaused[vault]) revert DepositsPaused();
+        if (isDeposit && (allDepositsPaused || depositsPaused[vault])) revert DepositsPaused();
 
-        // Blocks ERC-7928 adapter upgrades from causing loss of funds.
+        // Catches the one way an admitted address's code can still change: an EIP-7702 delegated
+        // EOA, whose code is a delegation indicator it can re-sign at will. A contract's code is
+        // immutable, and EIP-6780 ended metamorphic redeploys, so nothing else moves this hash.
+        // A proxy is not covered — its own code never changes when the implementation does.
         if (venue.adapter.codehash != venue.adapterCodeHash) revert AdapterCodeChanged();
 
         IYieldAdapter adapter = IYieldAdapter(venue.adapter);
@@ -191,6 +217,23 @@ contract GrowYieldExecutor is
         if (receivedOut == 0 || receivedOut < minimumOut) revert InsufficientOutput();
 
         emit Executed(msg.sender, vault, venue.adapter, op.kind, sent, receivedOut);
+    }
+
+    /// @dev Keeps the two authorities disjoint. Reads `owner()` rather than a constructor
+    ///      argument so a rotation is held to exactly the same rule as the initial assignment.
+    function _setRiskGuardian(address guardian) private {
+        if (guardian == address(0) || guardian == owner()) revert Invalid();
+
+        emit RiskGuardianSet(riskGuardian, guardian);
+        riskGuardian = guardian;
+    }
+
+    /// @dev Enforces disjointness from the other direction: ownership can never land on the
+    ///      guardian, which would silently collapse the two roles into one key. Renouncing is
+    ///      unaffected, because the guardian is never the zero address.
+    function _transferOwnership(address newOwner) internal override {
+        if (newOwner == riskGuardian) revert Invalid();
+        super._transferOwnership(newOwner);
     }
 
     /// @dev Resolves the source amount for the operation's declared amount mode.

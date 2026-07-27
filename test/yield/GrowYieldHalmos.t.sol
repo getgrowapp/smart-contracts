@@ -25,12 +25,8 @@ contract GrowYieldHalmosTest is GrowYieldTestBase {
     }
 
     /// @dev The policy reads `callData` as calldata; this external hop provides it.
-    function policyAllows(address account_, address executor_, bytes calldata callData)
-        external
-        pure
-        returns (bool)
-    {
-        return GrowYieldPolicyLib.isAllowed(account_, executor_, callData);
+    function policyAllows(address executor_, bytes calldata callData) external pure returns (bool) {
+        return GrowYieldPolicyLib.isAllowed(executor_, callData);
     }
 
     /// @custom:halmos --solver-timeout-assertion 0
@@ -73,7 +69,7 @@ contract GrowYieldHalmosTest is GrowYieldTestBase {
 
         assert(
             !this.policyAllows(
-                account, address(executor), abi.encodeCall(IModularAccount.executeBatch, (calls))
+                address(executor), abi.encodeCall(IModularAccount.executeBatch, (calls))
             )
         );
     }
@@ -89,7 +85,7 @@ contract GrowYieldHalmosTest is GrowYieldTestBase {
 
         assert(
             !this.policyAllows(
-                account, address(executor), abi.encodeCall(IModularAccount.executeBatch, (calls))
+                address(executor), abi.encodeCall(IModularAccount.executeBatch, (calls))
             )
         );
     }
