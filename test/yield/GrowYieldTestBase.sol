@@ -202,7 +202,23 @@ abstract contract GrowYieldTestBase is Test {
         );
     }
 
-    /// @dev Admits one more Aave venue on the default registry, reusing the same adapter.
+    /// @dev Admits the default Aave venue into `target`, deploying an adapter bound to it.
+    ///      Adapters authorize exactly one executor, so a second executor needs its own.
+    function _admitAaveVaultOn(GrowYieldExecutor target) internal {
+        AaveV3Adapter adapter = new AaveV3Adapter(
+            IAaveV3Pool(address(aavePool)),
+            IAaveProtocolDataProvider(address(aaveDataProvider)),
+            address(target)
+        );
+        IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
+            new IGrowYieldAdapterRegistry.VaultConfig[](1);
+        vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
+            address(adapter), aaveVault, Protocol.AAVE, true, true
+        );
+        target.addVaults(vaults);
+    }
+
+    /// @dev Admits one more Aave venue on the default executor, reusing the same adapter.
     function _admitAaveVault(address vault) internal {
         IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
             new IGrowYieldAdapterRegistry.VaultConfig[](1);

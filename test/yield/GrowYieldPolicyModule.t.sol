@@ -201,10 +201,17 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
         assertEq(policyModule.accountExecutor(account), address(executor), "unchanged");
     }
 
-    /// @dev Any genuinely bound executor/registry pair is accepted, which is the venue-set
-    ///      migration path.
-    function test_setExecutor_acceptsAnotherBoundExecutor() public {
+    /// @dev Any other usable executor is accepted, which is the venue-set migration path. An
+    ///      executor with no admitted venue is not usable, so it is rejected until governance
+    ///      has populated it.
+    function test_setExecutor_acceptsAnotherUsableExecutor() public {
         GrowYieldExecutor other = _deployExecutor(address(this));
+
+        vm.prank(account);
+        vm.expectRevert(IGrowYieldPolicyModule.InvalidConfiguration.selector);
+        policyModule.setExecutor(address(other));
+
+        _admitAaveVaultOn(other);
 
         vm.prank(account);
         vm.expectEmit(true, true, false, false, address(policyModule));

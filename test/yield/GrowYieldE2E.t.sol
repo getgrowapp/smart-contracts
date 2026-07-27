@@ -213,6 +213,7 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
     function test_e2e_policyOwnerCannotRetargetAccountExecutor() public {
         _installPolicy();
         GrowYieldExecutor rogue = _deployExecutor(address(this));
+        _admitAaveVaultOn(rogue);
 
         bytes memory retarget = abi.encodeCall(policyModule.setExecutor, (address(rogue)));
 
