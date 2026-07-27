@@ -11,8 +11,28 @@ interface ICapyFiCaToken is IERC20 {
     /// @notice Underlying ERC-20 supplied to this market.
     function underlying() external view returns (address);
 
-    /// @notice Stored exchange rate mantissa (scaled by 1e18).
+    /// @notice Exchange rate mantissa (scaled by 1e18) as of the last accrual.
+    /// @dev Stale between interactions. `exchangeRateCurrent` accrues first but writes state, so
+    ///      a `view` caller cannot reach it; the fields below let one replay `accrueInterest`.
     function exchangeRateStored() external view returns (uint256);
+
+    /// @notice Block height at which interest was last accrued.
+    function accrualBlockNumber() external view returns (uint256);
+
+    /// @notice Per-block borrow rate mantissa (scaled by 1e18).
+    function borrowRatePerBlock() external view returns (uint256);
+
+    /// @notice Total outstanding borrows as of the last accrual.
+    function totalBorrows() external view returns (uint256);
+
+    /// @notice Protocol reserves as of the last accrual.
+    function totalReserves() external view returns (uint256);
+
+    /// @notice Share of accrued interest routed to reserves (scaled by 1e18).
+    function reserveFactorMantissa() external view returns (uint256);
+
+    /// @notice Underlying held by the market.
+    function getCash() external view returns (uint256);
 
     /// @notice Supply `mintAmount` of underlying; credits caTokens to `msg.sender`.
     /// @return errorCode Compound-style error code; `0` means success.

@@ -107,8 +107,9 @@ interface IGrowYieldAdapterRegistry {
     /// @notice Another admitted venue already holds this venue's position token.
     error DuplicateVenue();
 
-    /// @notice The adapter's runtime code no longer matches the hash pinned on first admission.
-    ///         Checked at admission and again on every operation.
+    /// @notice The adapter's runtime code no longer matches the hash pinned on first admission,
+    ///         which in practice means an EIP-7702 delegated EOA re-pointed itself. Checked at
+    ///         admission and again on every operation.
     error AdapterCodeChanged();
 
     /// @notice Admit venues authenticated by this registry's pinned registrars.

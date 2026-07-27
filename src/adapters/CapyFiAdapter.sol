@@ -32,8 +32,6 @@ contract CapyFiAdapter is IYieldAdapter {
     error VenueDrift();
     error MintFailed(uint256 errorCode);
     error RedeemFailed(uint256 errorCode);
-    error ResidualBalance();
-    error ResidualAllowance();
 
     modifier onlyExecutor() {
         if (msg.sender != executor) revert OnlyExecutor();
@@ -64,14 +62,14 @@ contract CapyFiAdapter is IYieldAdapter {
 
     /// @inheritdoc IYieldAdapter
     function previewDeposit(address vault, uint256 assets) external view returns (uint256) {
-        uint256 rate = ICapyFiCaToken(vault).exchangeRateStored();
+        uint256 rate = _exchangeRate(vault);
         if (rate == 0) return 0;
         return Math.mulDiv(assets, EXP_SCALE, rate);
     }
 
     /// @inheritdoc IYieldAdapter
     function previewRedeem(address vault, uint256 shares) external view returns (uint256) {
-        return Math.mulDiv(shares, ICapyFiCaToken(vault).exchangeRateStored(), EXP_SCALE);
+        return Math.mulDiv(shares, _exchangeRate(vault), EXP_SCALE);
     }
 
     /// @inheritdoc IYieldAdapter
@@ -83,27 +81,17 @@ contract CapyFiAdapter is IYieldAdapter {
         _assertCanonical(vault);
 
         address underlying = ICapyFiCaToken(vault).underlying();
-        uint256 assetBefore = IERC20(underlying).balanceOf(address(this));
+        // Compound mints to `msg.sender`, so the adapter must measure its own mint and forward
+        // it. This delta is a transfer amount, not an assertion; the executor bounds residuals.
         uint256 sharesBefore = IERC20(vault).balanceOf(address(this));
 
         IERC20(underlying).forceApprove(vault, assets);
         uint256 mintError = ICapyFiCaToken(vault).mint(assets);
         if (mintError != 0) revert MintFailed(mintError);
         IERC20(underlying).forceApprove(vault, 0);
-        if (IERC20(underlying).allowance(address(this), vault) != 0) {
-            revert ResidualAllowance();
-        }
 
         uint256 minted = IERC20(vault).balanceOf(address(this)) - sharesBefore;
-        if (minted == 0) revert ResidualBalance();
         IERC20(vault).safeTransfer(receiver, minted);
-
-        if (IERC20(underlying).balanceOf(address(this)) != assetBefore - assets) {
-            revert ResidualBalance();
-        }
-        if (IERC20(vault).balanceOf(address(this)) != sharesBefore) {
-            revert ResidualBalance();
-        }
 
         return minted;
     }
@@ -117,27 +105,38 @@ contract CapyFiAdapter is IYieldAdapter {
         _assertCanonical(vault);
 
         address underlying = ICapyFiCaToken(vault).underlying();
-        uint256 sharesBefore = IERC20(vault).balanceOf(address(this));
+        // Compound redeems to `msg.sender`, so the adapter must measure its own proceeds and
+        // forward them. A delta, not an assertion; the executor bounds residuals.
         uint256 assetBefore = IERC20(underlying).balanceOf(address(this));
 
         uint256 redeemError = ICapyFiCaToken(vault).redeem(shares);
         if (redeemError != 0) revert RedeemFailed(redeemError);
 
-        // Consume exactly the caller-attributed caTokens; donations are not swept into an
-        // unrelated account's redemption.
-        if (IERC20(vault).balanceOf(address(this)) != sharesBefore - shares) {
-            revert ResidualBalance();
-        }
-
         uint256 assetsOut = IERC20(underlying).balanceOf(address(this)) - assetBefore;
-        if (assetsOut == 0) revert ResidualBalance();
         IERC20(underlying).safeTransfer(receiver, assetsOut);
 
-        if (IERC20(underlying).balanceOf(address(this)) != assetBefore) {
-            revert ResidualBalance();
-        }
-
         return assetsOut;
+    }
+
+    /// @dev The rate `mint` and `redeem` will actually use, which is not `exchangeRateStored`:
+    ///      Compound accrues interest first, and accrual raises the rate. Quoting the stale rate
+    ///      overstates deposit output, and the executor's loss cap then rejects the very deposit
+    ///      the preview described. `exchangeRateCurrent` accrues correctly but writes state, so a
+    ///      view cannot call it — hence replaying `accrueInterest` here.
+    ///
+    ///      Interest is driven entirely by borrows, so with none outstanding, no supply, or no
+    ///      elapsed blocks, accrual is a no-op and the stored rate is already exact.
+    function _exchangeRate(address vault) private view returns (uint256) {
+        ICapyFiCaToken market = ICapyFiCaToken(vault);
+        uint256 supply = market.totalSupply();
+        uint256 borrows = market.totalBorrows();
+        uint256 blocks = block.number - market.accrualBlockNumber();
+        if (supply == 0 || borrows == 0 || blocks == 0) return market.exchangeRateStored();
+
+        uint256 interest = Math.mulDiv(market.borrowRatePerBlock() * blocks, borrows, EXP_SCALE);
+        uint256 reserves = market.totalReserves()
+            + Math.mulDiv(market.reserveFactorMantissa(), interest, EXP_SCALE);
+        return Math.mulDiv(market.getCash() + borrows + interest - reserves, EXP_SCALE, supply);
     }
 
     /// @dev Fails closed if the market is delisted or no longer belongs to the pinned Comptroller.

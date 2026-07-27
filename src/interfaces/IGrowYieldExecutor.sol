@@ -59,8 +59,17 @@ interface IGrowYieldExecutor is IGrowYieldAdapterRegistry {
     /// @notice Emitted when a venue's deposits are paused.
     event VaultDepositsPaused(address indexed vault, address indexed by);
 
-    /// @notice Emitted when the registry owner re-enables a paused venue's deposits.
+    /// @notice Emitted when a paused venue's deposits are re-enabled.
     event VaultDepositsUnpaused(address indexed vault);
+
+    /// @notice Emitted when deposits are paused across every venue at once.
+    event AllDepositsPaused(address indexed by);
+
+    /// @notice Emitted when the blanket deposit pause is lifted.
+    event AllDepositsUnpaused(address indexed by);
+
+    /// @notice Emitted whenever the risk guardian is assigned or rotated.
+    event RiskGuardianSet(address indexed previousGuardian, address indexed newGuardian);
 
     /// @notice `execute` received more than `MAX_OPS` operations.
     error BatchTooLarge();
@@ -107,6 +116,27 @@ interface IGrowYieldExecutor is IGrowYieldAdapterRegistry {
     ///      from the owner's authority over the venue set.
     /// @param vault Venue whose deposits are re-enabled.
     function unpauseVaultDeposits(address vault) external;
+
+    /// @notice Disable new deposits into every venue at once.
+    /// @dev Risk guardian only. An incident that implicates the stack rather than one venue
+    ///      should not cost one transaction per venue. Redemptions stay available everywhere,
+    ///      and per-venue pauses are independent of this flag — lifting one does not lift both.
+    function pauseAllDeposits() external;
+
+    /// @notice Lift the blanket deposit pause.
+    /// @dev Risk guardian only. Venues paused individually remain paused.
+    function unpauseAllDeposits() external;
+
+    /// @notice Replace the risk guardian.
+    /// @dev Registry owner only, and the new guardian may be neither zero nor the owner, so the
+    ///      two authorities can never collapse into one key. Rotation exists because an
+    ///      unreplaceable guardian turns one lost key into a deployment that can never respond
+    ///      to an incident again.
+    /// @param guardian Address that takes over the deposit-pause lifecycle.
+    function setRiskGuardian(address guardian) external;
+
+    /// @notice Whether deposits are currently paused across every venue.
+    function allDepositsPaused() external view returns (bool);
 
     /// @notice Maximum accepted shortfall vs. adapter preview, in basis points.
     function maxLossBps() external view returns (uint16);
