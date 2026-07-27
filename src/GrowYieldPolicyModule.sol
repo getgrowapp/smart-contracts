@@ -14,8 +14,6 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-
 import {IGrowYieldExecutor} from "./interfaces/IGrowYieldExecutor.sol";
 import {IGrowYieldPolicyModule} from "./interfaces/IGrowYieldPolicyModule.sol";
 import {GrowYieldPolicyLib} from "./GrowYieldPolicyLib.sol";
@@ -306,11 +304,12 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
 
         try IGrowYieldExecutor(executor).vaultCount() returns (uint256 vaults) {
             // An executor with no admitted venue is unusable, so approving one is always a
-            // mistake.
-            if (
-                vaults == 0 || IGrowYieldExecutor(executor).riskGuardian() == address(0)
-                    || Ownable(executor).owner() == address(0)
-            ) revert InvalidConfiguration();
+            // mistake. Ownership is deliberately not inspected: the registry's documented
+            // end state is a renounced owner freezing the venue set forever, and rejecting
+            // that would lock every future account out of the safest executor there is.
+            if (vaults == 0 || IGrowYieldExecutor(executor).riskGuardian() == address(0)) {
+                revert InvalidConfiguration();
+            }
         } catch {
             revert InvalidConfiguration();
         }

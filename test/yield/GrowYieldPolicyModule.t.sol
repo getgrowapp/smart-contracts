@@ -221,6 +221,21 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
         assertEq(policyModule.accountExecutor(account), address(other));
     }
 
+    /// @dev The registry's documented end state is a renounced owner, freezing the venue set
+    ///      forever. That executor is the safest one an account can point at, so the typo filter
+    ///      must not inspect ownership — doing so locked every future account out of it.
+    function test_setExecutor_acceptsExecutorWithRenouncedOwnership() public {
+        GrowYieldExecutor frozen = _deployExecutor(address(this));
+        _admitAaveVaultOn(frozen);
+        frozen.renounceOwnership();
+        assertEq(frozen.owner(), address(0), "venue set frozen");
+
+        vm.prank(account);
+        policyModule.setExecutor(address(frozen));
+
+        assertEq(policyModule.accountExecutor(account), address(frozen));
+    }
+
     function test_setExecutor_requiresInstalledPolicy() public {
         vm.prank(makeAddr("notInstalled"));
         vm.expectRevert(IGrowYieldPolicyModule.PolicyNotInstalled.selector);
