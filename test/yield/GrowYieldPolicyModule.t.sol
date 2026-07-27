@@ -13,6 +13,18 @@ import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
 import {IGrowYieldPolicyModule} from "../../src/interfaces/IGrowYieldPolicyModule.sol";
 import {BaseModule} from "@erc6900/reference-implementation/modules/BaseModule.sol";
 import {Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
+import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
+import {MockValidationModule} from "./mocks/MockVaultV2Stack.sol";
+
+/// @dev Answers `registry()` with an address that does not name it back, standing in for a
+///      contract that mimics the executor surface without being one.
+contract FakeExecutor {
+    address public immutable registry;
+
+    constructor(address registry_) {
+        registry = registry_;
+    }
+}
 
 /// @notice Direct ERC-6900 policy validation, owner lifecycle, and policy bounds.
 contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
@@ -21,7 +33,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
     }
 
     function _depositOps() internal view returns (Operation[] memory) {
-        return _ops1(_op(aaveAdapter, OperationKind.DEPOSIT, type(uint256).max));
+        return _ops1(_op(aaveVault, OperationKind.DEPOSIT, type(uint256).max));
     }
 
     function _validDeposit(uint256 key)
@@ -43,7 +55,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
         PackedUserOperation memory userOp = _baseUserOp(
             _batch1(
                 address(aavePool.aToken()),
-                _ops1(_op(aaveAdapter, OperationKind.REDEEM, type(uint256).max))
+                _ops1(_op(aaveVault, OperationKind.REDEEM, type(uint256).max))
             )
         );
         bytes32 hash = keccak256("redeem");
@@ -59,8 +71,8 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
             _batch(
                 tokens,
                 _ops2(
-                    _op(aaveAdapter, OperationKind.REDEEM, type(uint256).max),
-                    _op(morphoAdapter, OperationKind.DEPOSIT, type(uint256).max)
+                    _op(aaveVault, OperationKind.REDEEM, type(uint256).max),
+                    _op(morphoVault, OperationKind.DEPOSIT, type(uint256).max)
                 )
             )
         );
@@ -122,7 +134,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
         address[] memory owners = new address[](1);
         owners[0] = otherOwner;
         vm.prank(otherAccount);
-        policyModule.onInstall(abi.encode(uint32(7), owners));
+        policyModule.onInstall(abi.encode(uint32(7), owners, address(executor)));
 
         PackedUserOperation memory userOp = _baseUserOp(_batch1(address(underlying), _depositOps()));
         userOp.sender = otherAccount;
@@ -155,13 +167,68 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
         vm.stopPrank();
     }
 
+    /// @dev The approved executor is the address a policy owner may later be authorized to
+    ///      approve for the account's full balance and call `execute` on, so an owner typo here
+    ///      would become a session-key-exploitable drain. It must prove it is a Grow executor
+    ///      bound to a registry that names it back.
+    function test_setExecutor_rejectsAnythingButABoundGrowExecutor() public {
+        // Deployed before the prank/expectRevert pairs: a `new` inside the same statement
+        // would consume the cheatcode instead of the `setExecutor` call.
+        address noRegistryFn = address(new MockValidationModule());
+        address unboundRegistry = address(new FakeExecutor(address(registry)));
+        address zeroRegistry = address(new FakeExecutor(address(0)));
+
+        vm.startPrank(account);
+
+        // An EOA has no code.
+        vm.expectRevert(IGrowYieldPolicyModule.InvalidConfiguration.selector);
+        policyModule.setExecutor(makeAddr("eoa"));
+
+        vm.expectRevert(IGrowYieldPolicyModule.InvalidConfiguration.selector);
+        policyModule.setExecutor(address(0));
+
+        // A deployed contract with no `registry()` at all.
+        vm.expectRevert(IGrowYieldPolicyModule.InvalidConfiguration.selector);
+        policyModule.setExecutor(noRegistryFn);
+
+        // Mimics the surface, but the registry it names does not name it back.
+        vm.expectRevert(IGrowYieldPolicyModule.InvalidConfiguration.selector);
+        policyModule.setExecutor(unboundRegistry);
+
+        // A registry pointer of zero.
+        vm.expectRevert(IGrowYieldPolicyModule.InvalidConfiguration.selector);
+        policyModule.setExecutor(zeroRegistry);
+
+        vm.stopPrank();
+        assertEq(policyModule.accountExecutor(account), address(executor), "unchanged");
+    }
+
+    /// @dev Any genuinely bound executor/registry pair is accepted, which is the venue-set
+    ///      migration path.
+    function test_setExecutor_acceptsAnotherBoundExecutor() public {
+        GrowYieldExecutor other = _deployExecutor(address(this));
+
+        vm.prank(account);
+        vm.expectEmit(true, true, false, false, address(policyModule));
+        emit IGrowYieldPolicyModule.ExecutorSet(account, address(other));
+        policyModule.setExecutor(address(other));
+
+        assertEq(policyModule.accountExecutor(account), address(other));
+    }
+
+    function test_setExecutor_requiresInstalledPolicy() public {
+        vm.prank(makeAddr("notInstalled"));
+        vm.expectRevert(IGrowYieldPolicyModule.PolicyNotInstalled.selector);
+        policyModule.setExecutor(address(executor));
+    }
+
     function test_reinstallRequiresUninstallFirst() public {
         address replacement = makeAddr("replacement");
         address[] memory owners = new address[](1);
         owners[0] = replacement;
         vm.prank(account);
         vm.expectRevert(IGrowYieldPolicyModule.PolicyAlreadyInstalled.selector);
-        policyModule.onInstall(abi.encode(uint32(9), owners));
+        policyModule.onInstall(abi.encode(uint32(9), owners, address(executor)));
 
         assertTrue(policyModule.isOwner(account, automation));
         assertFalse(policyModule.isOwner(account, replacement));
@@ -169,7 +236,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
 
         vm.startPrank(account);
         policyModule.onUninstall(hex"");
-        policyModule.onInstall(abi.encode(uint32(9), owners));
+        policyModule.onInstall(abi.encode(uint32(9), owners, address(executor)));
         vm.stopPrank();
 
         assertFalse(policyModule.isOwner(account, automation));
@@ -330,7 +397,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
 
         Operation[] memory ops = new Operation[](5);
         for (uint256 i; i < ops.length; ++i) {
-            ops[i] = _op(aaveAdapter, OperationKind.DEPOSIT, 1e6);
+            ops[i] = _op(aaveVault, OperationKind.DEPOSIT, 1e6);
         }
         _assertOwnerSignedPolicyRejection(_batch1(address(underlying), ops));
     }

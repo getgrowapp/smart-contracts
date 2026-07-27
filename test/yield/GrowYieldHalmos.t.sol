@@ -21,7 +21,16 @@ contract GrowYieldHalmosTest is GrowYieldTestBase {
     }
 
     function _depositOps() internal view returns (Operation[] memory) {
-        return _ops1(_op(aaveAdapter, OperationKind.DEPOSIT, type(uint256).max));
+        return _ops1(_op(aaveVault, OperationKind.DEPOSIT, type(uint256).max));
+    }
+
+    /// @dev The policy reads `callData` as calldata; this external hop provides it.
+    function policyAllows(address account_, address executor_, bytes calldata callData)
+        external
+        pure
+        returns (bool)
+    {
+        return GrowYieldPolicyLib.isAllowed(account_, executor_, callData);
     }
 
     /// @custom:halmos --solver-timeout-assertion 0
@@ -63,7 +72,7 @@ contract GrowYieldHalmosTest is GrowYieldTestBase {
         calls[2] = Call(address(underlying), 0, _approve(address(executor), 0));
 
         assert(
-            !GrowYieldPolicyLib.isAllowed(
+            !this.policyAllows(
                 account, address(executor), abi.encodeCall(IModularAccount.executeBatch, (calls))
             )
         );
@@ -79,7 +88,7 @@ contract GrowYieldHalmosTest is GrowYieldTestBase {
         calls[2] = Call(token, 0, _approve(address(executor), 0));
 
         assert(
-            !GrowYieldPolicyLib.isAllowed(
+            !this.policyAllows(
                 account, address(executor), abi.encodeCall(IModularAccount.executeBatch, (calls))
             )
         );
@@ -94,7 +103,7 @@ contract GrowYieldHalmosTest is GrowYieldTestBase {
         underlying.mint(account, amount);
         vm.startPrank(account);
         IERC20(address(underlying)).approve(address(executor), type(uint256).max);
-        executor.execute(_ops1(_op(aaveAdapter, OperationKind.DEPOSIT, type(uint256).max)));
+        executor.execute(_ops1(_op(aaveVault, OperationKind.DEPOSIT, type(uint256).max)));
         vm.stopPrank();
 
         assert(underlying.balanceOf(address(executor)) == 0);

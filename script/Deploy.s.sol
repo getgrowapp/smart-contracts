@@ -2,6 +2,7 @@
 pragma solidity 0.8.36;
 
 import {Script, console2} from "forge-std/Script.sol";
+import {VmSafe} from "forge-std/Vm.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {GrowYieldExecutor} from "../src/GrowYieldExecutor.sol";
@@ -12,7 +13,11 @@ import {CapyFiAdapter} from "../src/adapters/CapyFiAdapter.sol";
 import {EulerEarnAdapter} from "../src/adapters/EulerEarnAdapter.sol";
 import {EulerEVaultAdapter} from "../src/adapters/EulerEVaultAdapter.sol";
 import {MorphoVaultV2Adapter} from "../src/adapters/MorphoVaultV2Adapter.sol";
-import {IGrowYieldAdapterRegistry} from "../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {
+    IGrowYieldAdapterRegistry,
+    Protocol,
+    Venue
+} from "../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {IYieldAdapter} from "../src/interfaces/IYieldAdapter.sol";
 
 import {GrowYieldDeployer} from "./GrowYieldDeployer.sol";
@@ -26,7 +31,16 @@ import {GrowYieldDeployer} from "./GrowYieldDeployer.sol";
 ///      commit. Commit the resulting `deployments/<env>.json` so on-chain addresses are tracked
 ///      in version control (see deployments/README.md).
 ///
-///      Struct fields below are ordered ALPHABETICALLY by JSON key: `vm.parseJson` abi-encodes
+///      One adapter is deployed per supported protocol, and its constructor arguments are taken
+///      from `.registry.registrars` — the same source the registry pins — so an adapter cannot be
+///      wired to infrastructure the registry does not recognize. Venues are then listed per
+///      protocol under `.vaults`.
+///
+///      The registry is deployed owned by the shared deployer, receives the configured venue set
+///      in the same transaction, and is then offered to `.registry.owner`. That governance
+///      address must call `acceptOwnership()` before it can admit further venues.
+///
+///      `VaultCfg` fields are ordered ALPHABETICALLY by JSON key: `vm.parseJson` abi-encodes
 ///      object keys in lexicographic (byte) order, so the struct layout must match or decoding
 ///      silently misaligns. `test/yield/Deploy.t.sol` locks this ordering.
 contract Deploy is Script {
@@ -35,50 +49,22 @@ contract Deploy is Script {
     /// @dev Fixed salt for the shared deployer; yields one address across chains/environments.
     bytes32 internal constant DEPLOYER_SALT = bytes32(0);
 
-    struct AaveCfg {
-        address asset;
-        bool canDeposit;
-        bool canRedeem;
-        address dataProvider;
-        address pool;
-        bytes32 salt;
-    }
+    /// @dev Number of `Protocol` enum members.
+    uint256 internal constant PROTOCOL_COUNT = 5;
 
-    struct MorphoCfg {
+    /// @notice One venue entry under `.vaults.<protocol>`.
+    struct VaultCfg {
         bool canDeposit;
         bool canRedeem;
-        address eligibility;
-        address factory;
-        bytes32 salt;
-        address v1AdapterFactory;
-        address wrapper;
-    }
-
-    struct EulerEVaultCfg {
-        address asset;
-        bool canDeposit;
-        bool canRedeem;
-        address eVault;
-        address factory;
-        bytes32 salt;
-    }
-
-    struct EulerEarnCfg {
-        address asset;
-        bool canDeposit;
-        bool canRedeem;
-        address factory;
-        bytes32 salt;
         address vault;
     }
 
-    struct CapyFiCfg {
-        address asset;
-        address caToken;
-        bool canDeposit;
-        bool canRedeem;
-        address comptroller;
-        bytes32 salt;
+    /// @dev Adapters to deploy, one per supported protocol.
+    struct AdapterPlan {
+        bytes32[] salts;
+        bytes[] inits;
+        Protocol[] protocols;
+        address[] addrs;
     }
 
     /// @notice Deploys every contract for `env` (matching `script/config/<env>.json`).
@@ -86,84 +72,61 @@ contract Deploy is Script {
         string memory config = _loadConfig(env);
         GrowYieldDeployer deployer = _ensureDeployer();
 
+        GrowYieldDeployer.StackParams memory params;
+        params.registryOwner = vm.parseJsonAddress(config, ".registry.owner");
+        require(params.registryOwner != CREATE2_FACTORY, "registry owner is CREATE2 factory");
+
         // --- Executor init code + predicted address ---
-        uint16 maxLossBps = vm.parseJsonUint(config, ".executor.maxLossBps").toUint16();
         address riskGuardian = vm.parseJsonAddress(config, ".executor.riskGuardian");
         require(riskGuardian != CREATE2_FACTORY, "risk guardian is CREATE2 factory");
-        bytes memory executorInit = abi.encodePacked(
-            type(GrowYieldExecutor).creationCode, abi.encode(maxLossBps, riskGuardian)
+        // The executor deploys its own registry, so the registrars and the registry's initial
+        // owner (this deployer, which hands over in the same transaction) are executor args.
+        IGrowYieldAdapterRegistry.Registrars memory registrars = _registrars(config);
+        params.executorInit = abi.encodePacked(
+            type(GrowYieldExecutor).creationCode,
+            abi.encode(
+                vm.parseJsonUint(config, ".executor.maxLossBps").toUint16(),
+                riskGuardian,
+                address(deployer),
+                registrars
+            )
         );
-        bytes32 executorSalt = _salt(config, "executor");
-        address executorAddr =
-            vm.computeCreate2Address(executorSalt, keccak256(executorInit), address(deployer));
-
-        // --- Policy module init code (binds the executor address) ---
-        bytes memory policyInit = _policyInit(config, executorAddr);
-        bytes32 policySalt = _salt(config, "policyModule");
-
-        // --- Adapters (each binds the executor address) ---
-        (
-            bytes32[] memory adapterSalts,
-            bytes[] memory adapterInits,
-            bool[] memory canDeposit,
-            bool[] memory canRedeem,
-            string[] memory kinds
-        ) = _buildAdapters(config, executorAddr);
-
-        // --- Registry init code (binds executor + predicted adapter addresses) ---
-        address[] memory adapterAddrs = new address[](adapterInits.length);
-        IGrowYieldAdapterRegistry.AdapterConfig[] memory configs =
-            new IGrowYieldAdapterRegistry.AdapterConfig[](adapterInits.length);
-        for (uint256 i; i < adapterInits.length; ++i) {
-            adapterAddrs[i] = vm.computeCreate2Address(
-                adapterSalts[i], keccak256(adapterInits[i]), address(deployer)
-            );
-            configs[i] = IGrowYieldAdapterRegistry.AdapterConfig(
-                adapterAddrs[i], canDeposit[i], canRedeem[i]
-            );
-        }
-        bytes memory registryInit = abi.encodePacked(
-            type(GrowYieldAdapterRegistry).creationCode, abi.encode(executorAddr, configs)
+        params.executorSalt = _salt(config, "executor");
+        address executorAddr = vm.computeCreate2Address(
+            params.executorSalt, keccak256(params.executorInit), address(deployer)
         );
-        bytes32 registrySalt = _salt(config, "registry");
 
-        _logPlan(env, address(deployer), executorAddr, adapterAddrs, kinds);
+        // --- Policy module init code (pins no executor; accounts approve one at install) ---
+        params.policyInit = _policyInit(config);
+        params.policySalt = _salt(config, "policyModule");
+
+        // --- One adapter per supported protocol ---
+        AdapterPlan memory plan = _buildAdapters(config, executorAddr, registrars, deployer);
+        params.adapterSalts = plan.salts;
+        params.adapterInits = plan.inits;
+
+        // --- Initial venue set (binds predicted adapter addresses) ---
+        params.vaults = _buildVaults(config, plan);
+
+        _logPlan(env, address(deployer), executorAddr, plan, params.vaults);
 
         vm.startBroadcast();
-        (address executor, address policyModule, address[] memory adapters, address registry) = deployer.deployStack(
-            executorSalt,
-            executorInit,
-            policySalt,
-            policyInit,
-            adapterSalts,
-            adapterInits,
-            registrySalt,
-            registryInit
-        );
+        (address executor, address policyModule, address[] memory adapters, address registry) =
+            deployer.deployStack(params);
         vm.stopBroadcast();
 
-        _validateAuthorities(
-            config, address(deployer), riskGuardian, executor, policyModule, registry, adapters
-        );
+        _validateAuthorities(config, address(deployer), riskGuardian, executor, policyModule);
+        _validateRegistry(registry, executor, address(deployer), params);
 
         // Deployed addresses must equal the pre-broadcast predictions; otherwise the artifact
         // (and any dependent off-chain config) would record the wrong contracts.
         require(executor == executorAddr, "executor address mismatch");
         for (uint256 i; i < adapters.length; ++i) {
-            require(adapters[i] == adapterAddrs[i], "adapter address mismatch");
+            require(adapters[i] == plan.addrs[i], "adapter address mismatch");
+            require(IYieldAdapter(adapters[i]).executor() == executor, "wrong adapter executor");
         }
 
-        _writeDeployment(
-            env,
-            address(deployer),
-            executor,
-            policyModule,
-            registry,
-            adapters,
-            kinds,
-            canDeposit,
-            canRedeem
-        );
+        _writeDeployment(env, address(deployer), executor, policyModule, registry, plan, params);
     }
 
     // -------------------------------------------------------------------------
@@ -190,15 +153,10 @@ contract Deploy is Script {
     // Init-code builders
     // -------------------------------------------------------------------------
 
-    function _policyInit(string memory config, address executor)
-        internal
-        pure
-        returns (bytes memory)
-    {
+    function _policyInit(string memory config) internal pure returns (bytes memory) {
         return abi.encodePacked(
             type(GrowYieldPolicyModule).creationCode,
             abi.encode(
-                executor,
                 vm.parseJsonAddress(config, ".policyModule.requiredPaymaster"),
                 vm.parseJsonUint(config, ".policyModule.maxVerificationGas").toUint128(),
                 vm.parseJsonUint(config, ".policyModule.maxCallGas").toUint128(),
@@ -211,171 +169,233 @@ contract Deploy is Script {
         );
     }
 
-    /// @dev Decodes every configured adapter kind into flat, parallel deployment arrays.
-    function _buildAdapters(string memory config, address executor)
+    /// @dev Reads the registry's pinned registrars; an absent key leaves that protocol
+    ///      unsupported by the deployed registry, and no adapter is deployed for it.
+    function _registrars(string memory config)
         internal
         view
-        returns (
-            bytes32[] memory salts,
-            bytes[] memory inits,
-            bool[] memory canDeposit,
-            bool[] memory canRedeem,
-            string[] memory kinds
-        )
+        returns (IGrowYieldAdapterRegistry.Registrars memory r)
     {
-        AaveCfg[] memory aave = _decodeAave(config);
-        MorphoCfg[] memory morpho = _decodeMorpho(config);
-        EulerEVaultCfg[] memory eev = _decodeEulerEVault(config);
-        EulerEarnCfg[] memory earn = _decodeEulerEarn(config);
-        CapyFiCfg[] memory capy = _decodeCapyFi(config);
+        r.aavePool = _optionalAddress(config, ".registry.registrars.aavePool");
+        r.aaveDataProvider = _optionalAddress(config, ".registry.registrars.aaveDataProvider");
+        r.morphoVaultFactory = _optionalAddress(config, ".registry.registrars.morphoVaultFactory");
+        r.morphoAdapterFactory =
+            _optionalAddress(config, ".registry.registrars.morphoAdapterFactory");
+        r.morphoEligibility = _optionalAddress(config, ".registry.registrars.morphoEligibility");
+        r.eulerEVaultFactory = _optionalAddress(config, ".registry.registrars.eulerEVaultFactory");
+        r.eulerEarnFactory = _optionalAddress(config, ".registry.registrars.eulerEarnFactory");
+        r.capyFiComptroller = _optionalAddress(config, ".registry.registrars.capyFiComptroller");
+    }
 
-        uint256 n = aave.length + morpho.length + eev.length + earn.length + capy.length;
-        require(n > 0, "no adapters configured");
+    /// @dev Builds one adapter per protocol that has both a configured salt and pinned
+    ///      registrars. Constructor arguments come from the registrars themselves, so adapter and
+    ///      registry can never disagree about a protocol's canonical infrastructure.
+    function _buildAdapters(
+        string memory config,
+        address executor,
+        IGrowYieldAdapterRegistry.Registrars memory registrars,
+        GrowYieldDeployer deployer
+    ) internal view returns (AdapterPlan memory plan) {
+        bytes32[] memory salts = new bytes32[](PROTOCOL_COUNT);
+        bytes[] memory inits = new bytes[](PROTOCOL_COUNT);
+        Protocol[] memory protocols = new Protocol[](PROTOCOL_COUNT);
+        uint256 n;
 
-        salts = new bytes32[](n);
-        inits = new bytes[](n);
-        canDeposit = new bool[](n);
-        canRedeem = new bool[](n);
-        kinds = new string[](n);
-        uint256 k;
+        for (uint256 i; i < PROTOCOL_COUNT; ++i) {
+            Protocol protocol = Protocol(i);
+            string memory name = _protocolName(protocol);
+            string memory key = string.concat(".adapters.", name);
+            if (!vm.keyExistsJson(config, key)) continue;
 
-        for (uint256 i; i < aave.length; ++i) {
-            salts[k] = aave[i].salt;
-            inits[k] = abi.encodePacked(
+            bytes memory init = _adapterInit(protocol, registrars, executor);
+            require(init.length != 0, string.concat("registrars missing for adapter: ", name));
+
+            salts[n] = vm.parseJsonBytes32(config, key);
+            inits[n] = init;
+            protocols[n] = protocol;
+            ++n;
+        }
+
+        require(n != 0, "no adapters configured");
+
+        plan.salts = new bytes32[](n);
+        plan.inits = new bytes[](n);
+        plan.protocols = new Protocol[](n);
+        plan.addrs = new address[](n);
+        for (uint256 i; i < n; ++i) {
+            plan.salts[i] = salts[i];
+            plan.inits[i] = inits[i];
+            plan.protocols[i] = protocols[i];
+            plan.addrs[i] =
+                vm.computeCreate2Address(salts[i], keccak256(inits[i]), address(deployer));
+        }
+    }
+
+    /// @dev Adapter init code for `protocol`, or empty bytes if its registrars are not pinned.
+    function _adapterInit(
+        Protocol protocol,
+        IGrowYieldAdapterRegistry.Registrars memory r,
+        address executor
+    ) internal pure returns (bytes memory) {
+        if (protocol == Protocol.AAVE) {
+            if (r.aavePool == address(0)) return bytes("");
+            return abi.encodePacked(
                 type(AaveV3Adapter).creationCode,
-                abi.encode(aave[i].pool, aave[i].dataProvider, aave[i].asset, executor)
+                abi.encode(r.aavePool, r.aaveDataProvider, executor)
             );
-            canDeposit[k] = aave[i].canDeposit;
-            canRedeem[k] = aave[i].canRedeem;
-            kinds[k] = "aave";
-            ++k;
         }
-        for (uint256 i; i < morpho.length; ++i) {
-            salts[k] = morpho[i].salt;
-            inits[k] = abi.encodePacked(
-                type(MorphoVaultV2Adapter).creationCode,
-                abi.encode(
-                    morpho[i].wrapper,
-                    morpho[i].factory,
-                    morpho[i].v1AdapterFactory,
-                    morpho[i].eligibility,
-                    executor
-                )
+        if (protocol == Protocol.MORPHO) {
+            if (r.morphoEligibility == address(0)) return bytes("");
+            return abi.encodePacked(
+                type(MorphoVaultV2Adapter).creationCode, abi.encode(r.morphoEligibility, executor)
             );
-            canDeposit[k] = morpho[i].canDeposit;
-            canRedeem[k] = morpho[i].canRedeem;
-            kinds[k] = "morpho";
-            ++k;
         }
-        for (uint256 i; i < eev.length; ++i) {
-            salts[k] = eev[i].salt;
-            inits[k] = abi.encodePacked(
-                type(EulerEVaultAdapter).creationCode,
-                abi.encode(eev[i].factory, eev[i].eVault, eev[i].asset, executor)
+        if (protocol == Protocol.EULER_EVK) {
+            if (r.eulerEVaultFactory == address(0)) return bytes("");
+            return abi.encodePacked(
+                type(EulerEVaultAdapter).creationCode, abi.encode(r.eulerEVaultFactory, executor)
             );
-            canDeposit[k] = eev[i].canDeposit;
-            canRedeem[k] = eev[i].canRedeem;
-            kinds[k] = "eulerEVault";
-            ++k;
         }
-        for (uint256 i; i < earn.length; ++i) {
-            salts[k] = earn[i].salt;
-            inits[k] = abi.encodePacked(
-                type(EulerEarnAdapter).creationCode,
-                abi.encode(earn[i].factory, earn[i].vault, earn[i].asset, executor)
+        if (protocol == Protocol.EULER_EARN) {
+            if (r.eulerEarnFactory == address(0)) return bytes("");
+            return abi.encodePacked(
+                type(EulerEarnAdapter).creationCode, abi.encode(r.eulerEarnFactory, executor)
             );
-            canDeposit[k] = earn[i].canDeposit;
-            canRedeem[k] = earn[i].canRedeem;
-            kinds[k] = "eulerEarn";
-            ++k;
         }
-        for (uint256 i; i < capy.length; ++i) {
-            salts[k] = capy[i].salt;
-            inits[k] = abi.encodePacked(
-                type(CapyFiAdapter).creationCode,
-                abi.encode(executor, capy[i].comptroller, capy[i].caToken, capy[i].asset)
-            );
-            canDeposit[k] = capy[i].canDeposit;
-            canRedeem[k] = capy[i].canRedeem;
-            kinds[k] = "capyfi";
-            ++k;
+        if (r.capyFiComptroller == address(0)) return bytes("");
+        return abi.encodePacked(
+            type(CapyFiAdapter).creationCode, abi.encode(executor, r.capyFiComptroller)
+        );
+    }
+
+    /// @dev Flattens `.vaults.<protocol>` into admission entries bound to the protocol's adapter.
+    function _buildVaults(string memory config, AdapterPlan memory plan)
+        internal
+        view
+        returns (IGrowYieldAdapterRegistry.VaultConfig[] memory vaults)
+    {
+        address[PROTOCOL_COUNT] memory adapterByProtocol;
+        for (uint256 i; i < plan.protocols.length; ++i) {
+            adapterByProtocol[uint256(plan.protocols[i])] = plan.addrs[i];
         }
+
+        VaultCfg[][] memory perProtocol = new VaultCfg[][](PROTOCOL_COUNT);
+        uint256 total;
+        for (uint256 i; i < PROTOCOL_COUNT; ++i) {
+            perProtocol[i] = _decodeVaults(config, _protocolName(Protocol(i)));
+            if (perProtocol[i].length != 0) {
+                require(
+                    adapterByProtocol[i] != address(0),
+                    string.concat("no adapter for vaults: ", _protocolName(Protocol(i)))
+                );
+            }
+            total += perProtocol[i].length;
+        }
+        require(total != 0, "no vaults configured");
+
+        vaults = new IGrowYieldAdapterRegistry.VaultConfig[](total);
+        uint256 k;
+        for (uint256 i; i < PROTOCOL_COUNT; ++i) {
+            for (uint256 j; j < perProtocol[i].length; ++j) {
+                vaults[k++] = IGrowYieldAdapterRegistry.VaultConfig({
+                    adapter: adapterByProtocol[i],
+                    vault: perProtocol[i][j].vault,
+                    protocol: Protocol(i),
+                    canDeposit: perProtocol[i][j].canDeposit,
+                    canRedeem: perProtocol[i][j].canRedeem
+                });
+            }
+        }
+    }
+
+    function _decodeVaults(string memory config, string memory protocolName)
+        internal
+        view
+        returns (VaultCfg[] memory)
+    {
+        string memory key = string.concat(".vaults.", protocolName);
+        if (!vm.keyExistsJson(config, key)) return new VaultCfg[](0);
+        return abi.decode(vm.parseJson(config, key), (VaultCfg[]));
     }
 
     // -------------------------------------------------------------------------
-    // Config decoding (optional per-kind arrays under `.adapters.<kind>`)
+    // Post-deployment validation
     // -------------------------------------------------------------------------
 
-    function _decodeAave(string memory config) internal view returns (AaveCfg[] memory a) {
-        if (!vm.keyExistsJson(config, ".adapters.aave")) return new AaveCfg[](0);
-        a = abi.decode(vm.parseJson(config, ".adapters.aave"), (AaveCfg[]));
+    /// @dev Fail the script unless the executor and policy module bound the configured
+    ///      authorities. The executor is ownerless, so there is no owner to verify.
+    function _validateAuthorities(
+        string memory config,
+        address deployer,
+        address expectedRiskGuardian,
+        address executor,
+        address policyModule
+    ) internal view {
+        require(deployer != CREATE2_FACTORY, "CREATE2 factory is the deployer");
+        require(
+            GrowYieldExecutor(executor).riskGuardian() == expectedRiskGuardian,
+            "wrong risk guardian"
+        );
+
+        GrowYieldPolicyModule policy = GrowYieldPolicyModule(policyModule);
+        require(
+            policy.requiredPaymaster()
+                == vm.parseJsonAddress(config, ".policyModule.requiredPaymaster"),
+            "wrong required paymaster"
+        );
     }
 
-    function _decodeMorpho(string memory config) internal view returns (MorphoCfg[] memory a) {
-        if (!vm.keyExistsJson(config, ".adapters.morpho")) return new MorphoCfg[](0);
-        a = abi.decode(vm.parseJson(config, ".adapters.morpho"), (MorphoCfg[]));
-    }
+    /// @dev Fail the script unless the registry pins the configured executor, admitted every
+    ///      configured venue, and is offered to the configured governance owner.
+    function _validateRegistry(
+        address registry,
+        address executor,
+        address deployer,
+        GrowYieldDeployer.StackParams memory params
+    ) internal view {
+        GrowYieldAdapterRegistry r = GrowYieldAdapterRegistry(registry);
+        require(r.executor() == executor, "wrong registry executor");
+        require(
+            address(GrowYieldExecutor(executor).registry()) == registry, "executor/registry unbound"
+        );
+        require(r.owner() == deployer, "unexpected registry owner");
+        require(r.pendingOwner() == params.registryOwner, "registry not offered to governance");
+        require(r.vaultCount() == params.vaults.length, "unexpected registry venue count");
 
-    function _decodeEulerEVault(string memory config)
-        internal
-        view
-        returns (EulerEVaultCfg[] memory a)
-    {
-        if (!vm.keyExistsJson(config, ".adapters.eulerEVault")) return new EulerEVaultCfg[](0);
-        a = abi.decode(vm.parseJson(config, ".adapters.eulerEVault"), (EulerEVaultCfg[]));
-    }
-
-    function _decodeEulerEarn(string memory config)
-        internal
-        view
-        returns (EulerEarnCfg[] memory a)
-    {
-        if (!vm.keyExistsJson(config, ".adapters.eulerEarn")) {
-            return new EulerEarnCfg[](0);
+        for (uint256 i; i < params.vaults.length; ++i) {
+            IGrowYieldAdapterRegistry.VaultConfig memory expected = params.vaults[i];
+            Venue memory venue = r.venue(expected.vault);
+            require(venue.adapter == expected.adapter, "venue adapter mismatch");
+            require(venue.canDeposit == expected.canDeposit, "venue deposit flag");
+            require(venue.canRedeem == expected.canRedeem, "venue redeem flag");
+            require(r.vaultProtocol(expected.vault) == expected.protocol, "venue protocol");
+            require(
+                r.adapterCodeHash(expected.adapter) == expected.adapter.codehash,
+                "adapter code hash mismatch"
+            );
+            require(
+                venue.asset == IYieldAdapter(expected.adapter).asset(expected.vault),
+                "venue asset drift"
+            );
+            require(
+                venue.positionToken
+                    == IYieldAdapter(expected.adapter).positionToken(expected.vault),
+                "venue position drift"
+            );
         }
-        a = abi.decode(vm.parseJson(config, ".adapters.eulerEarn"), (EulerEarnCfg[]));
-    }
-
-    function _decodeCapyFi(string memory config) internal view returns (CapyFiCfg[] memory a) {
-        if (!vm.keyExistsJson(config, ".adapters.capyfi")) return new CapyFiCfg[](0);
-        a = abi.decode(vm.parseJson(config, ".adapters.capyfi"), (CapyFiCfg[]));
     }
 
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
-    /// @dev Fail the script if constructor authority was captured by the CREATE2 factory or if any
-    ///      component was bound to an address other than the explicitly configured authority.
-    function _validateAuthorities(
-        string memory config,
-        address deployer,
-        address expectedRiskGuardian,
-        address executor,
-        address policyModule,
-        address registry,
-        address[] memory adapters
-    ) internal view {
-        GrowYieldExecutor executorContract = GrowYieldExecutor(executor);
-        require(executorContract.owner() == deployer, "unexpected executor owner");
-        require(executorContract.owner() != CREATE2_FACTORY, "CREATE2 factory owns executor");
-        require(executorContract.riskGuardian() == expectedRiskGuardian, "wrong risk guardian");
-        require(address(executorContract.registry()) == registry, "wrong registry");
-
-        GrowYieldPolicyModule policy = GrowYieldPolicyModule(policyModule);
-        require(policy.executor() == executor, "wrong policy executor");
-        require(
-            policy.requiredPaymaster()
-                == vm.parseJsonAddress(config, ".policyModule.requiredPaymaster"),
-            "wrong required paymaster"
-        );
-
-        require(
-            GrowYieldAdapterRegistry(registry).executor() == executor, "wrong registry executor"
-        );
-        for (uint256 i; i < adapters.length; ++i) {
-            require(IYieldAdapter(adapters[i]).executor() == executor, "wrong adapter executor");
-        }
+    function _optionalAddress(string memory config, string memory key)
+        internal
+        view
+        returns (address)
+    {
+        if (!vm.keyExistsJson(config, key)) return address(0);
+        return vm.parseJsonAddress(config, key);
     }
 
     function _salt(string memory config, string memory key) internal pure returns (bytes32) {
@@ -386,33 +406,68 @@ contract Deploy is Script {
         return vm.readFile(string.concat("script/config/", env, ".json"));
     }
 
+    /// @dev JSON key and log label for a protocol.
+    function _protocolName(Protocol protocol) internal pure returns (string memory) {
+        if (protocol == Protocol.AAVE) return "aave";
+        if (protocol == Protocol.MORPHO) return "morpho";
+        if (protocol == Protocol.EULER_EVK) return "eulerEVault";
+        if (protocol == Protocol.EULER_EARN) return "eulerEarn";
+        return "capyfi";
+    }
+
     function _logPlan(
         string memory env,
         address deployer,
         address executor,
-        address[] memory adapterAddrs,
-        string[] memory kinds
+        AdapterPlan memory plan,
+        IGrowYieldAdapterRegistry.VaultConfig[] memory vaults
     ) internal pure {
         console2.log("=== GrowYield deploy plan:", env, "===");
         console2.log("  deployer:  ", deployer);
         console2.log("  executor:  ", executor);
-        for (uint256 i; i < adapterAddrs.length; ++i) {
-            console2.log(string.concat("  adapter[", kinds[i], "]:"), adapterAddrs[i]);
+        for (uint256 i; i < plan.addrs.length; ++i) {
+            console2.log(
+                string.concat("  adapter[", _protocolName(plan.protocols[i]), "]:"), plan.addrs[i]
+            );
+        }
+        for (uint256 i; i < vaults.length; ++i) {
+            console2.log(
+                string.concat("  vault[", _protocolName(vaults[i].protocol), "]:"), vaults[i].vault
+            );
         }
     }
 
     /// @dev Serializes the deployment to `deployments/<env>.json`. Commit the file for tracking.
+    ///      Only a real broadcast writes: a simulation would otherwise overwrite the record of
+    ///      what is actually live with addresses that were never deployed.
     function _writeDeployment(
         string memory env,
         address deployer,
         address executor,
         address policyModule,
         address registry,
-        address[] memory adapters,
-        string[] memory kinds,
-        bool[] memory canDeposit,
-        bool[] memory canRedeem
+        AdapterPlan memory plan,
+        GrowYieldDeployer.StackParams memory params
     ) internal {
+        string[] memory adapterKinds = new string[](plan.protocols.length);
+        for (uint256 i; i < plan.protocols.length; ++i) {
+            adapterKinds[i] = _protocolName(plan.protocols[i]);
+        }
+
+        uint256 count = params.vaults.length;
+        string[] memory vaultKinds = new string[](count);
+        address[] memory vaultAddrs = new address[](count);
+        address[] memory vaultAdapters = new address[](count);
+        bool[] memory vaultCanDeposit = new bool[](count);
+        bool[] memory vaultCanRedeem = new bool[](count);
+        for (uint256 i; i < count; ++i) {
+            vaultKinds[i] = _protocolName(params.vaults[i].protocol);
+            vaultAddrs[i] = params.vaults[i].vault;
+            vaultAdapters[i] = params.vaults[i].adapter;
+            vaultCanDeposit[i] = params.vaults[i].canDeposit;
+            vaultCanRedeem[i] = params.vaults[i].canRedeem;
+        }
+
         string memory root = "deployment";
         vm.serializeUint(root, "chainId", block.chainid);
         vm.serializeUint(root, "timestamp", block.timestamp);
@@ -421,12 +476,22 @@ contract Deploy is Script {
         vm.serializeAddress(root, "executor", executor);
         vm.serializeAddress(root, "policyModule", policyModule);
         vm.serializeAddress(root, "registry", registry);
-        vm.serializeString(root, "adapterKinds", kinds);
-        vm.serializeBool(root, "adapterCanDeposit", canDeposit);
-        vm.serializeBool(root, "adapterCanRedeem", canRedeem);
-        string memory json = vm.serializeAddress(root, "adapterAddresses", adapters);
+        vm.serializeAddress(
+            root, "registryPendingOwner", GrowYieldAdapterRegistry(registry).pendingOwner()
+        );
+        vm.serializeString(root, "adapterKinds", adapterKinds);
+        vm.serializeAddress(root, "adapterAddresses", plan.addrs);
+        vm.serializeString(root, "vaultKinds", vaultKinds);
+        vm.serializeAddress(root, "vaultAdapters", vaultAdapters);
+        vm.serializeBool(root, "vaultCanDeposit", vaultCanDeposit);
+        vm.serializeBool(root, "vaultCanRedeem", vaultCanRedeem);
+        string memory json = vm.serializeAddress(root, "vaultAddresses", vaultAddrs);
 
         string memory path = string.concat("deployments/", env, ".json");
+        if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) {
+            console2.log("Simulation only; not writing", path);
+            return;
+        }
         vm.writeJson(json, path);
         console2.log("Deployment written to", path);
     }

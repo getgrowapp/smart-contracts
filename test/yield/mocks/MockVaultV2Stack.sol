@@ -136,18 +136,28 @@ contract MockVaultV2 is ERC4626 {
     }
 }
 
-/// @dev Data provider with a re-pointable aToken, for reserve-drift tests.
+/// @dev Multi-reserve data provider with re-pointable aTokens, for reserve-drift tests.
+///      `asset`/`aToken` name the reserve given at construction.
 contract MockMutableAaveDataProvider is IAaveProtocolDataProvider {
     address public asset;
-    address public aToken;
+
+    mapping(address asset => address aToken) public reserves;
 
     constructor(address asset_, address aToken_) {
         asset = asset_;
-        aToken = aToken_;
+        reserves[asset_] = aToken_;
+    }
+
+    function aToken() external view returns (address) {
+        return reserves[asset];
     }
 
     function setAToken(address aToken_) external {
-        aToken = aToken_;
+        reserves[asset] = aToken_;
+    }
+
+    function setReserve(address asset_, address aToken_) external {
+        reserves[asset_] = aToken_;
     }
 
     function getReserveTokensAddresses(address queried)
@@ -155,8 +165,7 @@ contract MockMutableAaveDataProvider is IAaveProtocolDataProvider {
         view
         returns (address, address, address)
     {
-        if (queried != asset) return (address(0), address(0), address(0));
-        return (aToken, address(0), address(0));
+        return (reserves[queried], address(0), address(0));
     }
 }
 

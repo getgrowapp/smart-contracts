@@ -10,7 +10,10 @@ import {AaveV3Adapter} from "../../src/adapters/AaveV3Adapter.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
 import {AmountMode, Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
-import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {
+    IGrowYieldAdapterRegistry,
+    Protocol
+} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 
 /// @dev Aave V3 address book root; resolves current pool + data provider on fork.
 interface IPoolAddressesProvider {
@@ -42,34 +45,49 @@ contract GrowYieldForkTest is Test {
 
         IPoolAddressesProvider provider = IPoolAddressesProvider(AAVE_ADDRESSES_PROVIDER);
 
-        executor = new GrowYieldExecutor(50, address(this));
+        // The executor deploys its registry; both are immutable and name each other.
+        executor = new GrowYieldExecutor(
+            50,
+            address(this),
+            address(this),
+            IGrowYieldAdapterRegistry.Registrars({
+                aavePool: provider.getPool(),
+                aaveDataProvider: provider.getPoolDataProvider(),
+                morphoVaultFactory: address(0),
+                morphoAdapterFactory: address(0),
+                morphoEligibility: address(0),
+                eulerEVaultFactory: address(0),
+                eulerEarnFactory: address(0),
+                capyFiComptroller: address(0)
+            })
+        );
+        registry = GrowYieldAdapterRegistry(address(executor.registry()));
+
         adapter = new AaveV3Adapter(
             IAaveV3Pool(provider.getPool()),
             IAaveProtocolDataProvider(provider.getPoolDataProvider()),
-            USDC,
             address(executor)
         );
-        IGrowYieldAdapterRegistry.AdapterConfig[] memory configs =
-            new IGrowYieldAdapterRegistry.AdapterConfig[](1);
-        configs[0] = IGrowYieldAdapterRegistry.AdapterConfig(address(adapter), true, true);
-        registry = new GrowYieldAdapterRegistry(address(executor), configs);
-        executor.initializeRegistry(registry);
-        vm.prank(account);
-        executor.setAdapterPolicy(address(adapter), 1_000_000_000e6, 1_000_000_000e6, 1 days);
+        IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
+            new IGrowYieldAdapterRegistry.VaultConfig[](1);
+        vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
+            address(adapter), USDC, Protocol.AAVE, true, true
+        );
+        registry.addVaults(vaults);
     }
 
     function test_fork_depositAndRedeem_realAaveUsdc() public {
         uint256 amount = 10_000e6;
         deal(USDC, account, amount);
 
-        IERC20 aToken = IERC20(adapter.positionToken());
+        IERC20 aToken = IERC20(adapter.positionToken(USDC));
 
         vm.startPrank(account);
         IERC20(USDC).approve(address(executor), type(uint256).max);
 
         Operation[] memory ops = new Operation[](1);
         ops[0] = Operation({
-            adapter: adapter,
+            vault: USDC,
             kind: OperationKind.DEPOSIT,
             sourceToken: USDC,
             amount: 0,
@@ -86,7 +104,7 @@ contract GrowYieldForkTest is Test {
         aToken.approve(address(executor), type(uint256).max);
 
         ops[0] = Operation({
-            adapter: adapter,
+            vault: USDC,
             kind: OperationKind.REDEEM,
             sourceToken: address(aToken),
             amount: 0,
@@ -108,14 +126,14 @@ contract GrowYieldForkTest is Test {
     ///      spuriously revert.
     function test_fork_aTokenRounding_oddWeiRedeemExactness() public {
         deal(USDC, account, 10_000e6);
-        IERC20 aToken = IERC20(adapter.positionToken());
+        IERC20 aToken = IERC20(adapter.positionToken(USDC));
 
         vm.startPrank(account);
         IERC20(USDC).approve(address(executor), type(uint256).max);
 
         Operation[] memory ops = new Operation[](1);
         ops[0] = Operation({
-            adapter: adapter,
+            vault: USDC,
             kind: OperationKind.DEPOSIT,
             sourceToken: USDC,
             amount: 0,
@@ -132,7 +150,7 @@ contract GrowYieldForkTest is Test {
             vm.warp(block.timestamp + 13 hours + i * 7 hours);
 
             ops[0] = Operation({
-                adapter: adapter,
+                vault: USDC,
                 kind: OperationKind.REDEEM,
                 sourceToken: address(aToken),
                 amount: redeems[i],
@@ -147,7 +165,7 @@ contract GrowYieldForkTest is Test {
     }
 
     function test_fork_registryRemainsFixed() public view {
-        assertTrue(registry.canDeposit(address(adapter)));
+        assertTrue(registry.canDeposit(USDC));
         assertEq(registry.adapterCodeHash(address(adapter)), address(adapter).codehash);
     }
 }

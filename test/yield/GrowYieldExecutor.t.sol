@@ -13,12 +13,15 @@ import {MorphoVaultV2Adapter} from "../../src/adapters/MorphoVaultV2Adapter.sol"
 import {
     AmountMode,
     IGrowYieldExecutor,
-    IYieldAdapter,
     Operation,
     OperationKind
 } from "../../src/interfaces/IGrowYieldExecutor.sol";
-import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
-import {MockAavePool, MockUnderlying} from "../invariant/MockYieldVenues.sol";
+import {IYieldAdapter} from "../../src/interfaces/IYieldAdapter.sol";
+import {
+    IGrowYieldAdapterRegistry,
+    Protocol
+} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {MockAToken, MockAavePool, MockUnderlying} from "../invariant/MockYieldVenues.sol";
 import {MockFeeToken, MockMutableAaveDataProvider} from "./mocks/MockVaultV2Stack.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
@@ -45,30 +48,30 @@ contract MaliciousYieldAdapter is IYieldAdapter {
         return _executor;
     }
 
-    function asset() external view returns (address) {
+    function asset(address) external view returns (address) {
         return address(_asset);
     }
 
-    function positionToken() external view returns (address) {
+    function positionToken(address) external view returns (address) {
         return address(_position);
     }
 
-    function previewDeposit(uint256) external pure returns (uint256) {
+    function previewDeposit(address, uint256) external pure returns (uint256) {
         return 1;
     }
 
-    function previewRedeem(uint256) external pure returns (uint256) {
+    function previewRedeem(address, uint256) external pure returns (uint256) {
         return 1;
     }
 
-    function deposit(uint256 assets, address receiver) external returns (uint256) {
+    function deposit(address, uint256 assets, address receiver) external returns (uint256) {
         if (msg.sender != _executor) revert OnlyExecutor();
         _asset.safeTransfer(_recipient, assets);
         _position.mint(receiver, 1);
         return 1;
     }
 
-    function redeem(uint256, address) external pure returns (uint256) {
+    function redeem(address, uint256, address) external pure returns (uint256) {
         revert();
     }
 }
@@ -89,100 +92,96 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         return executor.execute(ops);
     }
 
-    function _newUninitializedExecutor()
-        private
-        returns (GrowYieldExecutor freshExecutor, GrowYieldAdapterRegistry freshRegistry)
-    {
-        freshExecutor = new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian);
-        MockUnderlying freshUnderlying = new MockUnderlying();
-        MockAavePool freshPool = new MockAavePool(freshUnderlying);
-        MockMutableAaveDataProvider freshProvider =
-            new MockMutableAaveDataProvider(address(freshUnderlying), address(freshPool.aToken()));
-        AaveV3Adapter freshAdapter = new AaveV3Adapter(
-            IAaveV3Pool(address(freshPool)),
-            IAaveProtocolDataProvider(address(freshProvider)),
-            address(freshUnderlying),
-            address(freshExecutor)
-        );
-        IGrowYieldAdapterRegistry.AdapterConfig[] memory configs =
-            new IGrowYieldAdapterRegistry.AdapterConfig[](1);
-        configs[0] = IGrowYieldAdapterRegistry.AdapterConfig(address(freshAdapter), true, true);
-        freshRegistry = new GrowYieldAdapterRegistry(address(freshExecutor), configs);
-    }
-
-    function test_constructor_setsOwnerToMsgSender() public view {
-        assertEq(executor.owner(), address(this));
-    }
-
-    function test_execute_revertsWhenRegistryUninitialized() public {
-        GrowYieldExecutor uninitialized = new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian);
-        Operation[] memory ops = new Operation[](0);
-
-        vm.expectRevert(IGrowYieldExecutor.Uninitialized.selector);
-        uninitialized.execute(ops);
-    }
-
-    function test_initializeRegistry_onlyOwnerCanInitialize() public {
-        (GrowYieldExecutor freshExecutor, GrowYieldAdapterRegistry freshRegistry) =
-            _newUninitializedExecutor();
-        address stranger = makeAddr("stranger");
-
-        vm.prank(stranger);
-        vm.expectRevert(
-            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger)
-        );
-        freshExecutor.initializeRegistry(freshRegistry);
-        assertEq(address(freshExecutor.registry()), address(0));
-
-        freshExecutor.initializeRegistry(freshRegistry);
-        assertEq(address(freshExecutor.registry()), address(freshRegistry));
-    }
-
-    function test_initializeRegistry_transferredOwnerCanInitialize() public {
-        (GrowYieldExecutor freshExecutor, GrowYieldAdapterRegistry freshRegistry) =
-            _newUninitializedExecutor();
-        address newOwner = makeAddr("newOwner");
-        freshExecutor.transferOwnership(newOwner);
-
-        // Two-step: the current owner keeps control until the pending owner accepts.
-        assertEq(freshExecutor.owner(), address(this));
-        assertEq(freshExecutor.pendingOwner(), newOwner);
-
-        vm.prank(newOwner);
-        freshExecutor.acceptOwnership();
-
-        vm.expectRevert(
-            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this))
-        );
-        freshExecutor.initializeRegistry(freshRegistry);
-
-        vm.prank(newOwner);
-        freshExecutor.initializeRegistry(freshRegistry);
-        assertEq(freshExecutor.owner(), newOwner);
-        assertEq(address(freshExecutor.registry()), address(freshRegistry));
-    }
-
     function test_constructor_rejectsZeroMaxLossBps() public {
         vm.expectRevert(IGrowYieldExecutor.Invalid.selector);
-        new GrowYieldExecutor(0, riskGuardian);
+        new GrowYieldExecutor(0, riskGuardian, address(this), _mockRegistrars());
     }
 
-    function test_setAdapterPolicy_revertsWhenRegistryUninitialized() public {
-        (GrowYieldExecutor freshExecutor,) = _newUninitializedExecutor();
-
-        vm.expectRevert(IGrowYieldExecutor.Uninitialized.selector);
-        freshExecutor.setAdapterPolicy(address(aaveAdapter), 1 ether, 1 ether, 1 days);
-
-        vm.expectRevert(IGrowYieldExecutor.Uninitialized.selector);
-        freshExecutor.resetAdapterPolicy(address(aaveAdapter), 1 ether, 1 ether, 1 days);
+    function test_constructor_rejectsLossCapAboveCeiling() public {
+        uint16 overCeiling = executor.MAX_LOSS_BPS_CEILING() + 1;
+        vm.expectRevert(IGrowYieldExecutor.Invalid.selector);
+        new GrowYieldExecutor(overCeiling, riskGuardian, address(this), _mockRegistrars());
     }
 
-    function test_pauseAdapterDeposits_revertsWhenRegistryUninitialized() public {
-        (GrowYieldExecutor freshExecutor,) = _newUninitializedExecutor();
+    function test_constructor_rejectsZeroRiskGuardian() public {
+        vm.expectRevert(IGrowYieldExecutor.Invalid.selector);
+        new GrowYieldExecutor(MAX_LOSS_BPS, address(0), address(this), _mockRegistrars());
+    }
 
+    /// @dev The executor and the registry it deployed name each other, immutably and with
+    ///      nothing settable. There is no per-account registry selection to get wrong.
+    function test_executorAndRegistryArePermanentlyBound() public {
+        assertEq(address(executor.registry()), address(registry));
+        assertEq(registry.executor(), address(executor));
+
+        // A second executor gets its own registry over the same venue infrastructure.
+        GrowYieldExecutor other = _deployExecutor(address(this));
+        assertNotEq(address(other.registry()), address(registry));
+        assertEq(other.registry().executor(), address(other));
+    }
+
+    /// @dev No account opt-in exists on the executor: admission alone makes a venue usable, and
+    ///      any caller may move their own funds through it.
+    function test_execute_needsNoPerAccountEnablement() public {
+        address stranger = makeAddr("stranger");
+        underlying.mint(stranger, 10e6);
+
+        vm.prank(stranger);
+        underlying.approve(address(executor), type(uint256).max);
+
+        Operation[] memory ops = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 10e6));
+        vm.prank(stranger);
+        executor.execute(ops);
+
+        assertEq(aavePool.aToken().balanceOf(stranger), 10e6);
+        assertEq(aavePool.aToken().balanceOf(account), 0, "no other account touched");
+    }
+
+    /// @dev An executor bound to a registry that never admitted the venue rejects it, which is
+    ///      what makes the executor choice — made once on the policy module — meaningful.
+    function test_execute_rejectsVenueAdmittedOnlyByAnotherExecutorsRegistry() public {
+        GrowYieldExecutor other = _deployExecutor(address(this));
+        underlying.mint(account, 10e6);
+
+        vm.prank(account);
+        underlying.approve(address(other), type(uint256).max);
+
+        Operation[] memory ops = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 10e6));
+        vm.prank(account);
+        vm.expectRevert(IGrowYieldExecutor.VenueNotAllowed.selector);
+        other.execute(ops);
+    }
+
+    function test_pauseVaultDeposits_rejectsUnknownVenueAndNonGuardian() public {
+        vm.prank(makeAddr("notGuardian"));
+        vm.expectRevert(IGrowYieldExecutor.OnlyRiskGuardian.selector);
+        executor.pauseVaultDeposits(aaveVault);
+
+        // A venue this registry never admitted fails loudly rather than recording a no-op pause.
         vm.prank(riskGuardian);
-        vm.expectRevert(IGrowYieldExecutor.Uninitialized.selector);
-        freshExecutor.pauseAdapterDeposits(address(aaveAdapter));
+        vm.expectRevert(IGrowYieldExecutor.VenueNotAllowed.selector);
+        executor.pauseVaultDeposits(makeAddr("typo"));
+    }
+
+    /// @dev Pausing one venue must not affect other venues of the same protocol, which share
+    ///      the adapter.
+    function test_pauseVaultDeposits_isPerVenueNotPerProtocol() public {
+        vm.prank(riskGuardian);
+        executor.pauseVaultDeposits(aaveVault);
+
+        assertTrue(executor.depositsPaused(aaveVault));
+        assertFalse(executor.depositsPaused(aaveVaultOther), "sibling venue unaffected");
+
+        otherUnderlying.mint(account, 10e6);
+        vm.prank(account);
+        IERC20(address(otherUnderlying)).approve(address(executor), type(uint256).max);
+        _execute(_ops1(_op(aaveVaultOther, OperationKind.DEPOSIT, 10e6)));
+
+        underlying.mint(account, 10e6);
+        _approveMax(address(underlying));
+        Operation[] memory paused = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 10e6));
+        vm.expectRevert(IGrowYieldExecutor.DepositsPaused.selector);
+        _execute(paused);
     }
 
     // --- deposits ---
@@ -191,7 +190,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         underlying.mint(account, 1_000e6);
         _approveMax(address(underlying));
 
-        uint256[] memory out = _execute(_ops1(_op(aaveAdapter, OperationKind.DEPOSIT, 400e6)));
+        uint256[] memory out = _execute(_ops1(_op(aaveVault, OperationKind.DEPOSIT, 400e6)));
 
         assertEq(out[0], 400e6);
         assertEq(aavePool.aToken().balanceOf(account), 400e6);
@@ -203,7 +202,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         underlying.mint(account, 1_000e6);
         _approveMax(address(underlying));
 
-        _execute(_ops1(_op(aaveAdapter, OperationKind.DEPOSIT, type(uint256).max)));
+        _execute(_ops1(_op(aaveVault, OperationKind.DEPOSIT, type(uint256).max)));
 
         assertEq(aavePool.aToken().balanceOf(account), 1_000e6);
         assertEq(underlying.balanceOf(account), 0);
@@ -214,7 +213,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         underlying.mint(account, 500e6);
         _approveMax(address(underlying));
 
-        uint256[] memory out = _execute(_ops1(_op(morphoAdapter, OperationKind.DEPOSIT, 500e6)));
+        uint256[] memory out = _execute(_ops1(_op(morphoVault, OperationKind.DEPOSIT, 500e6)));
 
         assertEq(out[0], morphoWrapper.balanceOf(account));
         assertGt(out[0], 0);
@@ -227,7 +226,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         _seedAave(1_000e6);
         _approveMax(address(aavePool.aToken()));
 
-        uint256[] memory out = _execute(_ops1(_op(aaveAdapter, OperationKind.REDEEM, 300e6)));
+        uint256[] memory out = _execute(_ops1(_op(aaveVault, OperationKind.REDEEM, 300e6)));
 
         assertEq(out[0], 300e6);
         assertEq(underlying.balanceOf(account), 300e6);
@@ -239,7 +238,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         _seedAave(1_000e6);
         _approveMax(address(aavePool.aToken()));
 
-        _execute(_ops1(_op(aaveAdapter, OperationKind.REDEEM, type(uint256).max)));
+        _execute(_ops1(_op(aaveVault, OperationKind.REDEEM, type(uint256).max)));
 
         assertEq(underlying.balanceOf(account), 1_000e6);
         assertEq(aavePool.aToken().balanceOf(account), 0);
@@ -253,7 +252,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         vm.stopPrank();
         _approveMax(address(aavePool.aToken()));
 
-        _execute(_ops1(_op(aaveAdapter, OperationKind.REDEEM, type(uint256).max)));
+        _execute(_ops1(_op(aaveVault, OperationKind.REDEEM, type(uint256).max)));
 
         assertEq(underlying.balanceOf(account), 90e6);
         assertEq(aavePool.aToken().balanceOf(address(aaveAdapter)), 10e6);
@@ -268,8 +267,8 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
 
         _execute(
             _ops2(
-                _op(aaveAdapter, OperationKind.REDEEM, type(uint256).max),
-                _op(morphoAdapter, OperationKind.DEPOSIT, type(uint256).max)
+                _op(aaveVault, OperationKind.REDEEM, type(uint256).max),
+                _op(morphoVault, OperationKind.DEPOSIT, type(uint256).max)
             )
         );
 
@@ -287,8 +286,8 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
 
         _execute(
             _ops2(
-                _op(aaveAdapter, OperationKind.REDEEM, type(uint256).max),
-                _op(morphoAdapter, OperationKind.DEPOSIT, type(uint256).max)
+                _op(aaveVault, OperationKind.REDEEM, type(uint256).max),
+                _op(morphoVault, OperationKind.DEPOSIT, type(uint256).max)
             )
         );
 
@@ -298,36 +297,56 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
 
     // --- gating ---
 
-    function test_execute_revertsUnknownAdapter() public {
-        underlying.mint(account, 1e6);
-        _approveMax(address(underlying));
+    /// @dev A genuine reserve of the pinned pool, reachable by the very adapter the account
+    ///      already uses, is still unusable until the registry admits it.
+    function test_execute_revertsUnadmittedVenue() public {
+        (address unadmitted,) = _addAaveReserve();
+        MockUnderlying(unadmitted).mint(account, 1e6);
+        vm.prank(account);
+        IERC20(unadmitted).approve(address(executor), type(uint256).max);
 
-        AaveV3Adapter rogue = new AaveV3Adapter(
-            IAaveV3Pool(address(aavePool)),
-            IAaveProtocolDataProvider(address(aaveDataProvider)),
-            address(underlying),
-            address(executor)
-        );
-        Operation[] memory ops = _ops1(_op(rogue, OperationKind.DEPOSIT, 1e6));
+        Operation memory op = Operation({
+            vault: unadmitted,
+            kind: OperationKind.DEPOSIT,
+            sourceToken: unadmitted,
+            amount: 1e6,
+            amountMode: AmountMode.EXACT,
+            minAmountOut: 1
+        });
 
-        vm.expectRevert(IGrowYieldExecutor.AdapterNotAllowed.selector);
-        _execute(ops);
+        vm.expectRevert(IGrowYieldExecutor.VenueNotAllowed.selector);
+        _execute(_ops1(op));
     }
 
+    /// @dev Direction is fixed at admission, not per account: a redeem-only venue is one the
+    ///      registry owner admitted with `canDeposit == false`.
     function test_directionalGating_depositClosedExitOpen() public {
-        _seedAave(100e6);
-        vm.prank(account);
-        executor.setAdapterPolicy(address(aaveAdapter), 0, DEFAULT_VOLUME_LIMIT, 1 days);
+        (address exitOnlyVault, MockAToken exitOnlyAToken) = _addAaveReserve();
+        IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
+            new IGrowYieldAdapterRegistry.VaultConfig[](1);
+        vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
+            address(aaveAdapter), exitOnlyVault, Protocol.AAVE, false, true
+        );
+        registry.addVaults(vaults);
 
-        underlying.mint(account, 1e6);
-        _approveMax(address(underlying));
-        Operation[] memory depositOps = _ops1(_op(aaveAdapter, OperationKind.DEPOSIT, 1e6));
-        vm.expectRevert(IGrowYieldExecutor.AdapterNotAllowed.selector);
+        MockUnderlying(exitOnlyVault).mint(account, 1e6);
+        vm.prank(account);
+        IERC20(exitOnlyVault).approve(address(executor), type(uint256).max);
+
+        Operation[] memory depositOps = _ops1(_op(exitOnlyVault, OperationKind.DEPOSIT, 1e6));
+        vm.expectRevert(IGrowYieldExecutor.VenueNotAllowed.selector);
         _execute(depositOps);
 
-        _approveMax(address(aavePool.aToken()));
-        _execute(_ops1(_op(aaveAdapter, OperationKind.REDEEM, type(uint256).max)));
-        assertEq(aavePool.aToken().balanceOf(account), 0);
+        // The exit direction stays open: seed a position around the closed deposit path.
+        MockUnderlying(exitOnlyVault).mint(address(aavePool), 1e6);
+        vm.prank(address(aavePool));
+        exitOnlyAToken.mint(account, 1e6);
+        vm.prank(account);
+        IERC20(address(exitOnlyAToken)).approve(address(executor), type(uint256).max);
+        _execute(_ops1(_op(exitOnlyVault, OperationKind.REDEEM, 1e6)));
+        // 1e6 held from the rejected deposit, plus the 1e6 just redeemed.
+        assertEq(MockUnderlying(exitOnlyVault).balanceOf(account), 2e6);
+        assertEq(exitOnlyAToken.balanceOf(account), 0);
     }
 
     function test_execute_revertsEmptyBatch() public {
@@ -339,7 +358,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
 
     function test_execute_revertsZeroAmount() public {
         _approveMax(address(underlying));
-        Operation[] memory ops = _ops1(_op(aaveAdapter, OperationKind.DEPOSIT, type(uint256).max));
+        Operation[] memory ops = _ops1(_op(aaveVault, OperationKind.DEPOSIT, type(uint256).max));
         vm.expectRevert(IGrowYieldExecutor.NoBalance.selector);
         _execute(ops);
     }
@@ -349,34 +368,41 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         _approveMax(address(underlying));
 
         Operation memory fullBalance =
-            _opWithMode(aaveAdapter, OperationKind.DEPOSIT, AmountMode.FULL_BALANCE, 1, 1);
+            _opWithMode(aaveVault, OperationKind.DEPOSIT, AmountMode.FULL_BALANCE, 1, 1);
         vm.expectRevert(IGrowYieldExecutor.InvalidAmountMode.selector);
         _execute(_ops1(fullBalance));
 
         Operation memory previousOutput =
-            _opWithMode(aaveAdapter, OperationKind.DEPOSIT, AmountMode.PREVIOUS_OUTPUT, 0, 1);
+            _opWithMode(aaveVault, OperationKind.DEPOSIT, AmountMode.PREVIOUS_OUTPUT, 0, 1);
         vm.expectRevert(IGrowYieldExecutor.InvalidAmountMode.selector);
         _execute(_ops1(previousOutput));
     }
 
     function test_execute_revertsSourceTokenMismatch() public {
         underlying.mint(account, 1e6);
-        Operation[] memory ops = _ops1(_op(aaveAdapter, OperationKind.DEPOSIT, 1e6));
+        Operation[] memory ops = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6));
         ops[0].sourceToken = address(otherUnderlying);
 
         vm.expectRevert(IGrowYieldExecutor.SourceTokenMismatch.selector);
         _execute(ops);
     }
 
-    function test_fixedRegistryCannotAdmitMaliciousAdapterAfterDeployment() public {
+    function test_registryCannotAdmitMaliciousAdapterWithoutAdmission() public {
         address thief = makeAddr("thief");
         MaliciousYieldAdapter malicious =
             new MaliciousYieldAdapter(underlying, address(executor), thief);
 
+        // Never admitted, so it has no pinned code hash and no venue routes through it.
+        underlying.mint(account, 1e6);
+        _approveMax(address(underlying));
+        Operation[] memory ops = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6));
+        ops[0].vault = address(malicious);
+
         vm.prank(account);
-        vm.expectRevert(IGrowYieldExecutor.AdapterNotAllowed.selector);
-        executor.setAdapterPolicy(address(malicious), 1, 0, 1 days);
+        vm.expectRevert(IGrowYieldExecutor.VenueNotAllowed.selector);
+        executor.execute(ops);
         assertEq(registry.adapterCodeHash(address(malicious)), bytes32(0));
+        assertEq(underlying.balanceOf(thief), 0);
     }
 
     // --- quantitative invariants ---
@@ -386,7 +412,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
 
         underlying.mint(account, 1_000e6);
         _approveMax(address(underlying));
-        Operation[] memory ops = _ops1(_op(morphoAdapter, OperationKind.DEPOSIT, 1_000e6));
+        Operation[] memory ops = _ops1(_op(morphoVault, OperationKind.DEPOSIT, 1_000e6));
 
         vm.expectRevert(IGrowYieldExecutor.InsufficientOutput.selector);
         _execute(ops);
@@ -398,7 +424,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         underlying.mint(account, 1_000e6);
         _approveMax(address(underlying));
 
-        uint256[] memory out = _execute(_ops1(_op(morphoAdapter, OperationKind.DEPOSIT, 1_000e6)));
+        uint256[] memory out = _execute(_ops1(_op(morphoVault, OperationKind.DEPOSIT, 1_000e6)));
         assertEq(out[0], 997e6);
     }
 
@@ -406,7 +432,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         morphoWrapper.setHaircutBps(50);
         underlying.mint(account, 101);
         _approveMax(address(underlying));
-        Operation[] memory ops = _ops1(_op(morphoAdapter, OperationKind.DEPOSIT, 101));
+        Operation[] memory ops = _ops1(_op(morphoVault, OperationKind.DEPOSIT, 101));
 
         vm.expectRevert(IGrowYieldExecutor.InsufficientOutput.selector);
         _execute(ops);
@@ -416,7 +442,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         underlying.mint(account, 100e6);
         _approveMax(address(underlying));
         Operation memory op =
-            _opWithMode(aaveAdapter, OperationKind.DEPOSIT, AmountMode.EXACT, 100e6, 100e6 + 1);
+            _opWithMode(aaveVault, OperationKind.DEPOSIT, AmountMode.EXACT, 100e6, 100e6 + 1);
 
         vm.expectRevert(IGrowYieldExecutor.InsufficientOutput.selector);
         _execute(_ops1(op));
@@ -426,116 +452,62 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         underlying.mint(account, 100e6);
         _approveMax(address(underlying));
         Operation memory op =
-            _opWithMode(aaveAdapter, OperationKind.DEPOSIT, AmountMode.EXACT, 100e6, 0);
+            _opWithMode(aaveVault, OperationKind.DEPOSIT, AmountMode.EXACT, 100e6, 0);
 
         vm.expectRevert(IGrowYieldExecutor.InsufficientOutput.selector);
         _execute(_ops1(op));
     }
 
     function test_feeOnTransferSource_revertsUnsupportedToken() public {
-        GrowYieldExecutor feeExecutor = new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian);
         MockFeeToken feeToken = new MockFeeToken();
         MockAavePool feePool = new MockAavePool(MockUnderlying(address(feeToken)));
         MockMutableAaveDataProvider feeProvider =
             new MockMutableAaveDataProvider(address(feeToken), address(feePool.aToken()));
+
+        GrowYieldExecutor feeExecutor = new GrowYieldExecutor(
+            MAX_LOSS_BPS,
+            riskGuardian,
+            address(this),
+            IGrowYieldAdapterRegistry.Registrars({
+                aavePool: address(feePool),
+                aaveDataProvider: address(feeProvider),
+                morphoVaultFactory: address(0),
+                morphoAdapterFactory: address(0),
+                morphoEligibility: address(0),
+                eulerEVaultFactory: address(0),
+                eulerEarnFactory: address(0),
+                capyFiComptroller: address(0)
+            })
+        );
         AaveV3Adapter feeAdapter = new AaveV3Adapter(
             IAaveV3Pool(address(feePool)),
             IAaveProtocolDataProvider(address(feeProvider)),
-            address(feeToken),
             address(feeExecutor)
         );
-        IGrowYieldAdapterRegistry.AdapterConfig[] memory configs =
-            new IGrowYieldAdapterRegistry.AdapterConfig[](1);
-        configs[0] = IGrowYieldAdapterRegistry.AdapterConfig(address(feeAdapter), true, true);
-        GrowYieldAdapterRegistry feeRegistry =
-            new GrowYieldAdapterRegistry(address(feeExecutor), configs);
-        feeExecutor.initializeRegistry(feeRegistry);
+
+        IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
+            new IGrowYieldAdapterRegistry.VaultConfig[](1);
+        vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
+            address(feeAdapter), address(feeToken), Protocol.AAVE, true, true
+        );
+        GrowYieldAdapterRegistry(address(feeExecutor.registry())).addVaults(vaults);
 
         feeToken.mint(account, 1_000e6);
         vm.startPrank(account);
-        feeExecutor.setAdapterPolicy(
-            address(feeAdapter), DEFAULT_VOLUME_LIMIT, DEFAULT_VOLUME_LIMIT, 1 days
-        );
         feeToken.approve(address(feeExecutor), type(uint256).max);
-        Operation[] memory ops = _ops1(_op(feeAdapter, OperationKind.DEPOSIT, 100e6));
+        Operation[] memory ops = new Operation[](1);
+        ops[0] = Operation({
+            vault: address(feeToken),
+            kind: OperationKind.DEPOSIT,
+            sourceToken: address(feeToken),
+            amount: 100e6,
+            amountMode: AmountMode.EXACT,
+            minAmountOut: 1
+        });
 
         vm.expectRevert(IGrowYieldExecutor.UnsupportedToken.selector);
         feeExecutor.execute(ops);
         vm.stopPrank();
-    }
-
-    function test_accountMustExplicitlyEnableFixedAdapter() public {
-        vm.prank(account);
-        executor.setAdapterPolicy(address(aaveAdapter), 0, 0, 0);
-        underlying.mint(account, 1e6);
-        _approveMax(address(underlying));
-        Operation[] memory ops = _ops1(_op(aaveAdapter, OperationKind.DEPOSIT, 1e6));
-
-        vm.expectRevert(IGrowYieldExecutor.AdapterNotAllowed.selector);
-        _execute(ops);
-    }
-
-    function test_registryCanOnlyBeInitializedOnce() public {
-        vm.expectRevert(IGrowYieldExecutor.RegistryAlreadyInitialized.selector);
-        executor.initializeRegistry(registry);
-    }
-
-    function test_epochBudgetBoundsCumulativeDepositVolume() public {
-        vm.prank(account);
-        executor.setAdapterPolicy(address(aaveAdapter), 100e6, 0, 1 days);
-        underlying.mint(account, 150e6);
-        _approveMax(address(underlying));
-
-        _execute(_ops1(_op(aaveAdapter, OperationKind.DEPOSIT, 60e6)));
-        Operation[] memory exceeds = _ops1(_op(aaveAdapter, OperationKind.DEPOSIT, 41e6));
-        vm.expectRevert(IGrowYieldExecutor.BudgetExceeded.selector);
-        _execute(exceeds);
-
-        vm.warp(block.timestamp + 1 days);
-        _execute(_ops1(_op(aaveAdapter, OperationKind.DEPOSIT, 41e6)));
-    }
-
-    function test_policyLimitUpdate_preservesConsumption() public {
-        vm.prank(account);
-        executor.setAdapterPolicy(address(aaveAdapter), 100e6, 0, 1 days);
-        underlying.mint(account, 100e6);
-        _approveMax(address(underlying));
-        _execute(_ops1(_op(aaveAdapter, OperationKind.DEPOSIT, 60e6)));
-
-        vm.prank(account);
-        executor.setAdapterPolicy(address(aaveAdapter), 70e6, 0, 1 days);
-        (,, uint256 spent,,,) = executor.adapterPolicy(account, address(aaveAdapter));
-        assertEq(spent, 60e6);
-
-        Operation[] memory exceeds = _ops1(_op(aaveAdapter, OperationKind.DEPOSIT, 11e6));
-        vm.expectRevert(IGrowYieldExecutor.BudgetExceeded.selector);
-        _execute(exceeds);
-    }
-
-    function test_policyDurationChange_requiresExplicitReset() public {
-        vm.prank(account);
-        executor.setAdapterPolicy(address(aaveAdapter), 100e6, 0, 1 days);
-        underlying.mint(account, 160e6);
-        _approveMax(address(underlying));
-        _execute(_ops1(_op(aaveAdapter, OperationKind.DEPOSIT, 60e6)));
-
-        vm.prank(account);
-        vm.expectRevert(IGrowYieldExecutor.EpochDurationChangeRequiresReset.selector);
-        executor.setAdapterPolicy(address(aaveAdapter), 100e6, 0, 2 days);
-
-        vm.prank(account);
-        executor.resetAdapterPolicy(address(aaveAdapter), 100e6, 0, 2 days);
-        (,, uint256 spent,, uint48 duration,) =
-            executor.adapterPolicy(account, address(aaveAdapter));
-        assertEq(spent, 0);
-        assertEq(duration, 2 days);
-        _execute(_ops1(_op(aaveAdapter, OperationKind.DEPOSIT, 100e6)));
-    }
-
-    function test_unboundedAdapterPolicy_isRejected() public {
-        vm.prank(account);
-        vm.expectRevert(IGrowYieldExecutor.UnboundedPolicy.selector);
-        executor.setAdapterPolicy(address(aaveAdapter), type(uint256).max, 0, 1 days);
     }
 
     function test_riskGuardianPause_blocksDepositsButNotExits() public {
@@ -543,36 +515,37 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
 
         vm.prank(makeAddr("notGuardian"));
         vm.expectRevert(IGrowYieldExecutor.OnlyRiskGuardian.selector);
-        executor.pauseAdapterDeposits(address(aaveAdapter));
+        executor.pauseVaultDeposits(aaveVault);
 
         vm.prank(riskGuardian);
-        executor.pauseAdapterDeposits(address(aaveAdapter));
-        assertTrue(executor.depositsPaused(address(aaveAdapter)));
+        executor.pauseVaultDeposits(aaveVault);
+        assertTrue(executor.depositsPaused(aaveVault));
 
         underlying.mint(account, 1e6);
         _approveMax(address(underlying));
-        Operation[] memory depositOps = _ops1(_op(aaveAdapter, OperationKind.DEPOSIT, 1e6));
+        Operation[] memory depositOps = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6));
         vm.expectRevert(IGrowYieldExecutor.DepositsPaused.selector);
         _execute(depositOps);
 
         _approveMax(address(aavePool.aToken()));
-        _execute(_ops1(_op(aaveAdapter, OperationKind.REDEEM, type(uint256).max)));
+        _execute(_ops1(_op(aaveVault, OperationKind.REDEEM, type(uint256).max)));
         assertEq(aavePool.aToken().balanceOf(account), 0);
     }
 
-    function test_revertedOperationDoesNotConsumeBudget() public {
-        vm.prank(account);
-        executor.setAdapterPolicy(address(morphoAdapter), 100e6, 0, 1 days);
+    /// @dev A reverted operation must leave no partial state: the source stays with the
+    ///      account and nothing lands on the adapter.
+    function test_revertedOperationLeavesNoPartialState() public {
         morphoWrapper.setHaircutBps(200);
         underlying.mint(account, 100e6);
         _approveMax(address(underlying));
 
-        Operation[] memory ops = _ops1(_op(morphoAdapter, OperationKind.DEPOSIT, 100e6));
+        Operation[] memory ops = _ops1(_op(morphoVault, OperationKind.DEPOSIT, 100e6));
         vm.expectRevert(IGrowYieldExecutor.InsufficientOutput.selector);
         _execute(ops);
 
-        (,, uint256 depositSpent,,,) = executor.adapterPolicy(account, address(morphoAdapter));
-        assertEq(depositSpent, 0);
+        assertEq(underlying.balanceOf(account), 100e6);
+        assertEq(morphoWrapper.balanceOf(account), 0);
+        _assertNoResiduals();
     }
 
     // --- drift protection ---
@@ -580,16 +553,16 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
     function test_morphoDrift_ineligibleChild_blocksDepositAllowsExit() public {
         underlying.mint(account, 200e6);
         _approveMax(address(underlying));
-        _execute(_ops1(_op(morphoAdapter, OperationKind.DEPOSIT, 100e6)));
+        _execute(_ops1(_op(morphoVault, OperationKind.DEPOSIT, 100e6)));
 
         morphoEligibility.set(address(morphoChild), false);
-        Operation[] memory depositOps = _ops1(_op(morphoAdapter, OperationKind.DEPOSIT, 100e6));
+        Operation[] memory depositOps = _ops1(_op(morphoVault, OperationKind.DEPOSIT, 100e6));
 
         vm.expectRevert(MorphoVaultV2Adapter.VenueDrift.selector);
         _execute(depositOps);
 
         _approveMax(address(morphoWrapper));
-        _execute(_ops1(_op(morphoAdapter, OperationKind.REDEEM, type(uint256).max)));
+        _execute(_ops1(_op(morphoVault, OperationKind.REDEEM, type(uint256).max)));
         assertEq(morphoWrapper.balanceOf(account), 0);
     }
 
@@ -598,7 +571,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
 
         underlying.mint(account, 100e6);
         _approveMax(address(underlying));
-        Operation[] memory ops = _ops1(_op(morphoAdapter, OperationKind.DEPOSIT, 100e6));
+        Operation[] memory ops = _ops1(_op(morphoVault, OperationKind.DEPOSIT, 100e6));
         vm.expectRevert(MorphoVaultV2Adapter.VenueDrift.selector);
         _execute(ops);
     }
@@ -607,43 +580,62 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         morphoWrapper.setGateBlocked(morphoWrapper.canSendShares.selector, account, true);
         underlying.mint(account, 100e6);
         _approveMax(address(underlying));
-        Operation[] memory ops = _ops1(_op(morphoAdapter, OperationKind.DEPOSIT, 100e6));
+        Operation[] memory ops = _ops1(_op(morphoVault, OperationKind.DEPOSIT, 100e6));
 
         vm.expectRevert(MorphoVaultV2Adapter.VenueGate.selector);
         _execute(ops);
     }
 
-    function test_aaveDrift_reserveRepointed_blocksDepositAllowsExit() public {
+    /// @dev Aave re-points a reserve's aToken only by dropping and re-initializing the reserve
+    ///      (`updateAToken` upgrades the proxy behind a fixed address), which strands the old
+    ///      aToken at the protocol level: the pool no longer manages it, so no caller can
+    ///      withdraw against it. Grow blocks the deposit on drift and leaves the stranded
+    ///      position untouched; the exit is closed by Aave, not by the executor. Drift is
+    ///      per-venue, so sibling reserves of the same pool and adapter keep working.
+    function test_aaveDrift_reserveRepointed_blocksDepositAndStrandsThatVenueOnly() public {
         _seedAave(100e6);
 
         aaveDataProvider.setAToken(makeAddr("newAToken"));
 
         underlying.mint(account, 100e6);
         _approveMax(address(underlying));
-        Operation[] memory depositOps = _ops1(_op(aaveAdapter, OperationKind.DEPOSIT, 100e6));
-        vm.expectRevert(AaveV3Adapter.ReserveDrift.selector);
+        Operation[] memory depositOps = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 100e6));
+        vm.expectRevert(IGrowYieldExecutor.VenueDrift.selector);
         _execute(depositOps);
 
+        // The drifted venue's exit is no longer serviceable, and nothing is swept or lost.
         _approveMax(address(aavePool.aToken()));
-        _execute(_ops1(_op(aaveAdapter, OperationKind.REDEEM, type(uint256).max)));
-        assertEq(aavePool.aToken().balanceOf(account), 0);
+        Operation[] memory exitOps = _ops1(_op(aaveVault, OperationKind.REDEEM, 100e6));
+        vm.expectRevert();
+        _execute(exitOps);
+        assertEq(aavePool.aToken().balanceOf(account), 100e6, "position untouched");
+        assertEq(underlying.balanceOf(account), 100e6, "deposit funds returned to account");
+
+        // A sibling reserve served by the same pool and adapter still round-trips.
+        otherUnderlying.mint(account, 50e6);
+        _approveMax(address(otherUnderlying));
+        _execute(_ops1(_op(aaveVaultOther, OperationKind.DEPOSIT, 50e6)));
+
+        _approveMax(address(aavePool.aTokens(aaveVaultOther)));
+        _execute(_ops1(_op(aaveVaultOther, OperationKind.REDEEM, type(uint256).max)));
+        assertEq(otherUnderlying.balanceOf(account), 50e6);
     }
 
     // --- access ---
 
     function test_adapters_onlyExecutor() public {
         vm.expectRevert(AaveV3Adapter.OnlyExecutor.selector);
-        aaveAdapter.deposit(1, account);
+        aaveAdapter.deposit(aaveVault, 1, account);
 
         vm.expectRevert(MorphoVaultV2Adapter.OnlyExecutor.selector);
-        morphoAdapter.redeem(1, account);
+        morphoAdapter.redeem(morphoVault, 1, account);
     }
 
     function test_strangerCannotMoveAccountFunds() public {
         _seedAave(100e6);
 
         address stranger = makeAddr("stranger");
-        Operation[] memory ops = _ops1(_op(aaveAdapter, OperationKind.REDEEM, 100e6));
+        Operation[] memory ops = _ops1(_op(aaveVault, OperationKind.REDEEM, 100e6));
         vm.prank(stranger);
         vm.expectRevert();
         executor.execute(ops);
@@ -659,7 +651,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         address stranger = makeAddr("stranger");
         uint256 strangerBefore = underlying.balanceOf(stranger);
 
-        _execute(_ops1(_op(aaveAdapter, OperationKind.REDEEM, type(uint256).max)));
+        _execute(_ops1(_op(aaveVault, OperationKind.REDEEM, type(uint256).max)));
 
         assertEq(underlying.balanceOf(stranger), strangerBefore);
         assertEq(underlying.balanceOf(account), 100e6);
@@ -670,7 +662,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
     function _seedAave(uint256 amount) internal {
         underlying.mint(account, amount);
         _approveMax(address(underlying));
-        _execute(_ops1(_op(aaveAdapter, OperationKind.DEPOSIT, type(uint256).max)));
+        _execute(_ops1(_op(aaveVault, OperationKind.DEPOSIT, type(uint256).max)));
         vm.prank(account);
         underlying.approve(address(executor), 0);
     }

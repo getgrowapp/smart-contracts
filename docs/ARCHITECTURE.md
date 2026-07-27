@@ -27,7 +27,8 @@ flowchart LR
     Policy["GrowYieldPolicyModule"]
     PolicyLib["GrowYieldPolicyLib"]
     Executor["GrowYieldExecutor"]
-    Registry["GrowYieldAdapterRegistry\nconstructor-fixed"]
+    Registry["GrowYieldAdapterRegistry\nappend-only, governance-owned"]
+    Registrars["Protocol registrars\nregistry-pinned"]
     Guardian["Risk guardian"]
     Aave[AaveV3Adapter]
     Morpho[MorphoVaultV2Adapter]
@@ -37,7 +38,7 @@ flowchart LR
     Venues["Aave / Morpho / Euler / CapyFi"]
     Paymaster["Pinned sponsor paymaster"]
 
-    Owners -->|install, configure, rotate, revoke| Account
+    Owners -->|install, select registry, configure, rotate, revoke| Account
     PolicyOwner -->|sign exact UserOp| Bundler
     Bundler --> EP
     Paymaster -->|sponsor| EP
@@ -45,7 +46,8 @@ flowchart LR
     Account -->|validateUserOp| Policy
     Policy --> PolicyLib
     Account -->|executeBatch| Executor
-    Executor --> Registry
+    Executor -->|account-selected| Registry
+    Registry -->|venue authenticity at admission| Registrars
     Executor --> Aave
     Executor --> Morpho
     Executor --> EulerEVK
@@ -57,6 +59,7 @@ flowchart LR
     EulerEarn --> Venues
     Capy --> Venues
     Guardian -->|permanent deposit pause| Executor
+    Gov["Registry owner\nSafe / Timelock"] -->|addVaults| Registry
 ```
 
 The layers are deliberately separate:
@@ -66,8 +69,8 @@ The layers are deliberately separate:
 | Alchemy account | Selects the installed validation entity and applies selector scope |
 | Policy module | Authenticates an account-scoped policy owner and constrains UserOp fields |
 | Policy library | Accepts only one canonical approve/execute/revoke batch shape |
-| Executor | Pins recipients, resolves amounts, checks output floors, budgets, and pauses |
-| Registry | Fixes adapter addresses, directions, token pairs, and runtime code hashes |
+| Executor | Resolves the account's registry, pins recipients and amounts, checks output floors, budgets, and pauses |
+| Registry | Admits factory-authenticated venues and fixes their directions, token pairs, and runtime code hashes |
 | Adapters | Translate the uniform executor API into venue-specific calls and drift checks |
 
 ## Contract catalogue
@@ -149,9 +152,10 @@ unrelated idle underlying already held by the account.
 
 For every operation the executor:
 
-1. Confirms registry direction, account policy, code hash, and deposit-pause state.
+1. Resolves the venue from its immutable registry, then confirms the registry permits the
+   direction, the adapter code hash matches, and deposits are not paused.
 2. Re-derives source and output tokens and checks the signed source declaration.
-3. Resolves the explicit amount mode and consumes the directional epoch budget.
+3. Resolves the explicit amount mode.
 4. Reads the adapter preview.
 5. Transfers the exact source amount directly from the account to the adapter.
 6. Invokes the adapter, which credits output directly to the account.
@@ -172,25 +176,81 @@ max(
 The preview-relative check limits unexpected venue slippage. The absolute floor
 protects against a manipulated or compromised preview returning a misleading value.
 
-### Adapter policies
+### Executor–registry binding
 
-Each account owns separate deposit and redeem source-volume limits for every fixed
-adapter. `setAdapterPolicy` changes limits without clearing already-consumed volume.
-Changing the epoch duration requires `resetAdapterPolicy`, which explicitly resets
-usage and emits `AdapterPolicyUsageReset`.
+The executor has **no owner** and no per-account configuration. It deploys its own registry
+in its constructor, and the two name each other immutably:
 
-`type(uint256).max` is rejected as `UnboundedPolicy`: it would make the quantitative
-limit meaningless. Limits must be finite and chosen in the source token's native
-units. Zero disables one direction; two zero limits revoke the adapter for that
-account while retaining prior usage unless an explicit reset is requested.
+```solidity
+IGrowYieldAdapterRegistry public immutable registry;   // on the executor
+address public immutable executor;                     // on the registry
+```
+
+Deploying the registry from the constructor is what makes the binding total. CREATE2 cannot
+resolve a mutual pin — each contract's init code would have to contain the other's address —
+so the alternatives are a settable slot or an initializer window. Creating the registry inline
+has neither: nothing about the pair is configurable after deployment.
+
+Which venues exist is therefore a single governance decision, made once by the registry owner
+calling `addVaults`. There is no per-account registry selection and no per-account, per-venue
+enablement to keep in sync with it.
+
+The executor is permissionless as a result: `execute` pulls the source token from `msg.sender`
+and credits every output back to `msg.sender`, so a caller can only ever move their own funds,
+and only into or out of an admitted venue. Nothing is gained by calling it as anyone else.
+
+### The account's opt-in
+
+An account approves exactly one executor, and it does so on the **policy module**, not on the
+executor:
+
+```solidity
+function setExecutor(address executor) external;               // keyed by msg.sender
+function accountExecutor(address account) external view returns (address);
+```
+
+`onInstall(abi.encode(entityId, policyOwners, executor))` is the account's whole enrollment —
+one owner-signed transaction. The executor names the registry, the registry names the venues,
+and there is nothing further to configure.
+
+Because `GrowYieldPolicyLib` accepts exactly one batch shape and that shape contains nothing
+but `approve` / `executor.execute` / `approve`, **no policy-owner signature can ever produce a
+`setExecutor` call**. Replacing the executor requires the account's own owner-authorized
+validation path — the same path that installs the module. Session keys and the Grow backend
+are excluded by construction.
+
+Replacement is immediate and has no overlap: batches targeting the previous executor stop
+validating the moment `setExecutor` returns. Exit positions opened through an executor before
+replacing it. Since each executor is permanently bound to its own registry, this is also how
+an account moves to a new admitted venue set — for example one that supports a new protocol.
+
+An account with no approved executor validates nothing: `isAllowedCallData` returns false.
+
+### What is deliberately *not* constrained
+
+There are no per-account, per-venue volume limits, epochs, or directional budgets. A
+policy-owner (session key) may move the account's full balance between admitted venues at
+will. The remaining constraints are qualitative, not quantitative:
+
+- output is credited only to the account, so funds cannot leave it;
+- only admitted venues, only in admitted directions;
+- every hop must clear the loss-capped preview floor and the signed absolute floor.
+
+The residual exposure is **attrition**, not theft: a compromised session key can cycle
+deposit → redeem → deposit and lose up to `maxLossBps` per hop on sponsor-paid gas. The risk
+guardian's deposit pause is the only volume-side control, and owner-signed `removeOwner` is
+the revocation path.
 
 ### Risk guardian
 
 The executor has one immutable `riskGuardian`. It can permanently pause new deposits
-through a registered adapter. It cannot unpause, move funds, change limits, admit an
-adapter, or block redemptions. This adds incident-response value without giving the
-guardian a withdrawal or migration power. Recovery from a false pause requires a
-new deployment and owner-approved migration.
+through an adapter, for every account and every registry at once. It cannot unpause, move
+funds, change limits, admit an adapter, or block redemptions. This adds incident-response
+value without giving the guardian a withdrawal or migration power. Recovery from a false
+pause requires a new deployment and owner-approved migration.
+
+The pause target must be a venue this executor's own registry admitted, so a mistyped address
+reverts `VenueNotAllowed` rather than recording a pause that protects nothing.
 
 ### Trust boundary: authenticity vs Grow approval
 
@@ -203,28 +263,93 @@ They do **not** answer:
 
 > “Is this vault or market an acceptable Grow yield venue?”
 
-That second decision is made solely by **including the adapter in the
-constructor-fixed `GrowYieldAdapterRegistry`**. The registry is Grow's approval and
-risk-admission layer: which venues exist, which directions are enabled, and which
-runtime code hashes the executor will accept. A factory-authentic Euler vault that
-is absent from the registry cannot be used. Conversely, registry inclusion without
-passing the adapter's authenticity checks fails closed at construction or execution.
+That second decision is made solely by **the registry owner calling `addVaults`**. The
+registry is Grow's approval and risk-admission layer: which venues exist, which directions
+are enabled, and which runtime code hashes the executor will accept. A factory-authentic
+Euler vault that is absent from the registry cannot be used. Conversely, admission without
+passing the adapter's own authenticity checks fails closed at construction or execution.
+
+The registry does **not** take the owner's word on authenticity. It re-derives the venue from
+`IYieldAdapter.positionToken()` and asks its own constructor-pinned registrar, so admitting a
+venue the protocol never created is impossible even for a compromised owner. Risk judgement
+is delegated to the owner; provenance is not.
 
 ### `GrowYieldAdapterRegistry`
 
-The registry is constructor-only and has no owner or mutation function. It records:
+The registry is `Ownable2Step` and **append-only**. `addVaults` is its only writer: an
+admitted entry's adapter, protocol, directions, code hash, and venue binding are never
+mutated or removed. It records:
 
-- Each adapter in constructor order.
-- Deposit and redeem permissions.
-- Each adapter's deployment-time runtime code hash.
+- Each adapter in admission order (`adapterCount` / `adapterAt`).
+- Deposit and redeem permissions, plus the admitting protocol (`vaultProtocol`).
+- Each adapter's admission-time runtime code hash.
 - Each venue's position token → underlying binding.
 
-Construction verifies the adapter's pinned executor, nonidentical deployed asset and
-position tokens, unique adapter addresses, and unique position tokens (duplicate
-venues or conflicting asset/position bindings revert). Enumeration through
-`adapterCount` and `adapterAt` supports monitoring without adding mutation
-authority. Proxies are still unsuitable: a proxy's runtime code hash can stay
-constant while its implementation changes.
+The owner should be a Safe or TimelockController. Once the intended venue set is final the
+owner may `renounceOwnership()`, making the registry fully immutable. There is no delisting
+path: deposit-side wind-down is the risk guardian's permanent `pauseAdapterDeposits`, and any
+account can zero its own directional limits, so no mutation can ever strip `canRedeem` and
+trap an account in a position.
+
+There is no lifetime vault ceiling. Nothing on-chain iterates the admitted set — `adapterAt`
+and `adapterCount` are O(1) and no loop reads the whole array — so a cap would buy nothing and
+would introduce a cliff at which a purely numeric limit, unrelated to protocol support, forces a
+registry migration and a re-consent from every account. The venue count is bounded by governance
+intent alone.
+
+Proxies remain unsuitable as adapters: a proxy's runtime code hash can stay constant while
+its implementation changes.
+
+#### Constructor-pinned registrars
+
+The registry pins one canonical registrar set per supported protocol, immutably:
+
+| Field | Protocol | Used for |
+|---|---|---|
+| `aavePool`, `aaveDataProvider` | `AAVE` | Reserve lookup and adapter wiring |
+| `morphoVaultFactory`, `morphoAdapterFactory`, `morphoEligibility` | `MORPHO` | Wrapper, liquidity-adapter, and child authentication |
+| `eulerEVaultFactory` | `EULER_EVK` | EVault proxy authentication |
+| `eulerEarnFactory` | `EULER_EARN` | Earn vault authentication |
+| `capyFiComptroller` | `CAPYFI` | Market listing |
+
+A zero address marks that protocol **unsupported by this registry**; `addVaults` rejects it
+with `UnsupportedProtocol`. Aave requires both of its fields and Morpho all three — a
+half-configured protocol reverts at construction rather than silently skipping part of its
+authenticity proof. Every nonzero registrar must be a deployed contract.
+
+Because the `Protocol` enum and its registrars are fixed at deployment, **supporting a new
+protocol requires deploying a new registry** and having accounts reselect it. Adding another
+vault for an already-supported protocol does not.
+
+#### `addVaults` admission checks
+
+Protocol-independent, for every entry:
+
+| Check | Failure |
+|---|---|
+| Adapter is a deployed contract, and at least one direction is enabled | `Invalid` |
+| Adapter not already registered (append-only) | `VaultAlreadyRegistered` |
+| `IYieldAdapter.executor() == executor` | `Invalid` |
+| `asset` and `positionToken` are deployed and distinct | `Invalid` |
+| No registered adapter already holds this position token | `DuplicateVenue` |
+
+Then, dispatched on the declared protocol — first that the adapter is wired to the registry's
+own registrars (`RegistrarMismatch`), then that the registrar recognizes the venue
+(`NotCanonicalVenue`):
+
+| Protocol | Adapter wiring re-checked | Registrar proof over `positionToken()` |
+|---|---|---|
+| `AAVE` | `pool()`, `dataProvider()` | `getReserveTokensAddresses(asset()).aToken == positionToken()` |
+| `MORPHO` | `eligibility()` | `isVaultV2(wrapper)`, `isMorphoVaultV1Adapter(liquidityAdapter())`, that adapter's `parentVault()`/`morphoVaultV1()` re-derive the wrapper and `child()`, and `isEligibleVault(child)` |
+| `EULER_EVK` | `factory()` | `isProxy(vault)` |
+| `EULER_EARN` | `factory()` | `isVault(vault)` |
+| `CAPYFI` | `comptroller()` | `markets(caToken).isListed` |
+
+The Morpho path deliberately re-derives routing from the liquidity adapter rather than
+trusting the venue adapter's reported `child()`, so an eligible child cannot be claimed by a
+wrapper that routes somewhere else. Every registrar call is `view`, hence a `STATICCALL`: an
+adapter or registrar cannot mutate state or reenter during admission (and `addVaults` is
+`onlyOwner`, so a reentrant call would fail on `msg.sender` anyway).
 
 ### `AaveV3Adapter`
 
@@ -288,39 +413,41 @@ account, and on a clean path (no prior donations) finishes with zero caToken,
 underlying, and allowances. Donated caTokens already held by the adapter are not
 swept into another account's redeem.
 
-### Adding adapters: registry vs executor redeploy
+### Adding venues: what must be redeployed
 
-The registry is constructor-fixed and has no mutation path. The executor attaches a
-registry exactly once via `initializeRegistry` and then rejects further attachment.
-Every adapter also immutably pins `executor`.
-
-| Deployment state | What must be redeployed |
+| Change | What is required |
 |---|---|
-| Executor deployed but `initializeRegistry` not yet called | Deploy the new immutable adapters (pinning that executor), then deploy one complete registry containing the full intended adapter set, then call `initializeRegistry` once. **Registry-only attachment** — the executor bytecode need not change. |
-| Executor already initialized with a registry | The live registry cannot admit new adapters and cannot be swapped. Deploy a **new executor**, new adapters pinned to that executor, a new complete registry, and (because the policy module constructor also pins the executor) a new policy module install on accounts that should use the expanded set. |
+| New venue for an already-supported protocol | `addVaults` from the registry owner. The protocol's adapter already exists and serves every venue of that protocol, so nothing is redeployed and every account sees the venue immediately. |
+| New **protocol** | Deploy a new executor pinning the additional registrar (it deploys its own registry), deploy adapters for it, `addVaults` the full intended set, then each account switches with one owner-signed `policy.setExecutor`. The policy module and the old stack are untouched. |
+| Change to executor or policy-module logic | Full stack migration, as before: a new executor, new adapters pinned to it, a new registry, and a new policy-module install on each account. |
 
-#### Live Base status (as of this change)
+Adapters pin their executor, so a new executor requires new adapter deployments; the registrars
+and venue addresses they are wired to do not change. Accounts that switch gain the whole new
+venue set at once, which is the trade for having no per-account venue gate.
 
-Historical Base deployments (`GrowYieldExecutorV6` at
-`0x4Ac4BE21D3E285DD3A6c6e9B908fc84aC3E72306` and `GrowYieldExecutor1271V2` at
-`0xDD440Cb9530502dAE4e6a5022e5f1dD2718d5dCE`) already have a registry attached, but
-they are **not** this repository's `GrowYieldExecutor`. No production address for
-it is recorded in this repository.
+### Deployment procedure
 
-Therefore the intended path for the first production stack from this repository is
-the **executor stays / registry-once** route:
+`script/Deploy.s.sol` drives `GrowYieldDeployer.deployStack` from `script/config/<env>.json`.
+One atomic transaction deploys the executor (which deploys its registry), the policy module,
+and every adapter; admits the configured vault set; and offers registry ownership to
+`.registry.owner`:
 
-1. Deploy `GrowYieldExecutor` (and `GrowYieldPolicyModule`).
-2. Deploy every intended immutable adapter pinned to that executor (Aave, Morpho,
-   Euler EVK, Euler Earn, CapyFi, …).
-3. Deploy one complete `GrowYieldAdapterRegistry` listing all of them.
-4. Call `initializeRegistry` once from the executor deployer.
+1. The executor's init code names the shared deployer as its registry's initial owner.
+2. The deployer calls `addVaults` with the full configured set, then `transferOwnership`.
+3. Governance calls `acceptOwnership()` in a later transaction.
 
-Do not attempt to hot-add Euler/CapyFi into the legacy V6/1271 registries.
+The deployer can never admit vaults again: `deployStack` is its only function, and CREATE2
+cannot reproduce the now-occupied stack addresses. It also rejects a `registryOwner` of zero
+or itself, either of which would strand ownership with a contract that cannot call `addVaults`.
 
-Greenfield production therefore should include every intended venue in the first
-registry whenever possible. Expanding venues after initialization is an executor-stack
-migration, not a registry hot-add.
+The script cross-checks every configured adapter's protocol addresses against
+`.registry.registrars`, so an adapter wired to infrastructure the registry does not pin fails
+the script rather than reverting on-chain. It also asserts post-deployment that the registry
+pins the expected executor, admitted every configured vault with the expected code hash,
+directions, and protocol, and is pending transfer to the configured owner.
+
+Accounts are not enrolled by deployment. Each account enrolls itself with one owner-signed
+`installValidation`, whose install data names the executor it approves.
 
 Fork-tested venue constructor arguments and authenticity results are recorded in
 [`ADAPTER-DEPLOYMENT-MATRIX.md`](ADAPTER-DEPLOYMENT-MATRIX.md).
@@ -391,12 +518,13 @@ sequenceDiagram
     O->>EP: Owner-signed UserOp, nonce key 1
     EP->>A: validate via entity-0 global owner validator
     EP->>A: installValidation(Grow entity, executeBatch selector)
-    A->>P: onInstall(abi.encode(entityId, policyOwners))
-    P->>P: Store entity and policy-owner addresses under account
+    A->>P: onInstall(abi.encode(entityId, policyOwners, executor))
+    P->>P: Store entity, policy owners, and approved executor under account
+    Note over P,X: One transaction is the whole opt-in: the executor names<br/>the registry, the registry names the venues.
 
-    O->>EP: Owner-signed configuration UserOp, nonce key 1
-    EP->>A: execute(executor.setAdapterPolicy(...))
-    A->>X: Set finite directional limits
+    O->>EP: Later owner-signed executor switch (new venue set)
+    EP->>A: execute(policy.setExecutor(newExecutor))
+    A->>P: Replace this account's approved executor
 
     O->>EP: Later owner-signed rotation/revocation UserOp
     EP->>A: execute(policy.addOwner/removeOwner)
@@ -408,7 +536,8 @@ Recommended install data is:
 ```text
 abi.encode(
   growEntityId,
-  address[] policyOwners
+  address[] policyOwners,
+  address approvedExecutor
 )
 ```
 
@@ -418,9 +547,10 @@ closed if the account passes a different entity during later validation. Grow st
 one entity per account and rejects a second installation; uninstall the old entity
 before selecting a replacement so the account cannot retain stale dual registrations.
 
-The account-owner path—not the Grow policy—must also set finite adapter limits. A
-policy owner cannot authorize `installValidation`, owner management, policy
-management, guardian actions, arbitrary `execute`, or an arbitrary `executeBatch`.
+`approvedExecutor` completes enrollment in the same call: no follow-up configuration
+transaction is required, and the account can never be left half-configured. A policy owner
+cannot authorize `installValidation`, owner management, policy management, `setExecutor`,
+guardian actions, arbitrary `execute`, or an arbitrary `executeBatch`.
 
 ## Automated rebalance execution flow
 
@@ -471,17 +601,24 @@ Independent controls are available:
 4. Uninstall the Grow validation entity through the owner path.
 5. Stop sponsor approval at the pinned paymaster.
 
+Registry reselection is a configuration control, not a revocation one: every registry the
+account can select must be nonempty, so it cannot be used as an off switch. Use control 1 or 4
+for an immediate, single-call account-wide stop.
+
 Keep redemptions enabled during venue incidents whenever the venue still permits an
 exit. Neither local contracts nor the guardian can guarantee external liquidity,
 solvency, or future gate access.
 
 ## Verification boundary
 
-The suite executes install, policy configuration, entity-specific nonce selection,
-final-segment signature parsing, sponsored validation, deposit, redemption,
-reallocation, replay rejection, and policy-owner revocation against Alchemy's
-pinned v2.0.1 `ModularAccount` source. It also includes unit, adversarial, invariant,
-Halmos-oriented, and optional Base Aave / Euler / CapyFi fork tests.
+The suite executes install, owner-signed registry selection, policy configuration,
+entity-specific nonce selection, final-segment signature parsing, sponsored validation,
+deposit, redemption, reallocation, replay rejection, and policy-owner revocation against
+Alchemy's pinned v2.0.1 `ModularAccount` source. It asserts end-to-end that a policy-owner
+signature cannot retarget an account's registry, bare or wrapped in a batch, and that the
+owner path can. It also includes unit, adversarial, invariant, Halmos-oriented, and optional
+Base fork tests; the all-adapters fork test admits one live vault per protocol, exercising
+every registrar dispatch against real Base deployments.
 
 Production still requires reviewed direct adapter bytecode, verified constructor
 arguments, a non-token-charging sponsor, realistic per-token limits and output floors,

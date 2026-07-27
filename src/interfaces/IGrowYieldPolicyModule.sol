@@ -14,7 +14,10 @@ interface IGrowYieldPolicyModule is IValidationModule {
     /// @notice Emitted when an account revokes a policy owner.
     event OwnerRemoved(address indexed account, address indexed owner);
 
-    /// @notice The owner set or constructor policy is invalid.
+    /// @notice Emitted when an account sets the single executor its policy batches may call.
+    event ExecutorSet(address indexed account, address indexed executor);
+
+    /// @notice The owner set, executor, or constructor policy is invalid.
     error InvalidConfiguration();
 
     /// @notice The owner is already authorized for the calling account.
@@ -52,8 +55,17 @@ interface IGrowYieldPolicyModule is IValidationModule {
     /// @notice Return the account-selected validation entity for this module.
     function policyEntityId(address account) external view returns (uint32);
 
-    /// @notice Yield executor accepted by the calldata policy.
-    function executor() external view returns (address);
+    /// @notice Replace the single yield executor the calling account's policy batches may call.
+    /// @dev A modular account must call this through its owner-authorized execution path: the
+    ///      calldata policy accepts no batch containing this call, so a policy owner (session
+    ///      key) can never reach it. Replacement is immediate and has no overlap — batches
+    ///      targeting the previous executor stop validating the moment this returns, so exit any
+    ///      positions opened through it first. Each executor is permanently bound to its own
+    ///      registry, so this is also how an account moves to a new admitted venue set.
+    function setExecutor(address executor) external;
+
+    /// @notice Yield executor `account` approved; zero until the account installs the policy.
+    function accountExecutor(address account) external view returns (address);
 
     /// @notice Paymaster required for every policy-authorized UserOperation.
     function requiredPaymaster() external view returns (address);

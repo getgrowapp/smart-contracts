@@ -26,7 +26,10 @@ import {IEulerEarnFactory} from "../../src/interfaces/IEulerEarnFactory.sol";
 import {IEulerEVaultFactory} from "../../src/interfaces/IEulerEVaultFactory.sol";
 import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
 import {AmountMode, Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
-import {IGrowYieldAdapterRegistry} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
+import {
+    IGrowYieldAdapterRegistry,
+    Protocol
+} from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {IYieldAdapter} from "../../src/interfaces/IYieldAdapter.sol";
 
 interface IPoolAddressesProviderAllAdaptersFork {
@@ -73,17 +76,17 @@ contract GrowYieldAllAdaptersForkTest is Test {
     // Keep the cycle below the live Euler Earn strategy's remaining supply capacity.
     uint256 internal constant REBALANCE_AMOUNT = 1e6;
     uint256 internal constant IDLE_AMOUNT = 17e6;
-    // Position-token decimals differ (for example Morpho V2 uses 18 and caUSDC uses 8),
-    // so the test policy must bound raw units above every fixture's full-balance amount.
-    uint256 internal constant VOLUME_LIMIT = 1e36;
-
     GrowYieldExecutor internal executor;
     AaveV3Adapter internal aave;
     MorphoVaultV2Adapter internal morpho;
     EulerEVaultAdapter internal evault;
     EulerEarnAdapter internal earn;
     CapyFiAdapter internal capy;
+    GrowYieldAdapterRegistry internal registry;
     address internal account;
+
+    address[5] internal adapters;
+    address[5] internal vaults;
 
     function setUp() public {
         string memory rpc = vm.envOr("BASE_RPC_URL", string(""));
@@ -91,71 +94,78 @@ contract GrowYieldAllAdaptersForkTest is Test {
         vm.createSelectFork(rpc);
 
         account = makeAddr("allAdaptersAccount");
-        executor = new GrowYieldExecutor(50, address(this));
 
         IPoolAddressesProviderAllAdaptersFork aaveProvider =
             IPoolAddressesProviderAllAdaptersFork(AAVE_ADDRESSES_PROVIDER);
+
+        IVaultV2 wrapper0 = IVaultV2(MORPHO_USDC_WRAPPER);
+        address child0 = IMorphoVaultV1Adapter(wrapper0.liquidityAdapter()).morphoVaultV1();
+        ForkMorphoEligibility eligibility = new ForkMorphoEligibility(child0);
+
+        // The executor deploys its registry; both are immutable and name each other.
+        executor = new GrowYieldExecutor(
+            50, address(this), address(this), _registrars(aaveProvider, address(eligibility))
+        );
+        registry = GrowYieldAdapterRegistry(address(executor.registry()));
+
         aave = new AaveV3Adapter(
             IAaveV3Pool(aaveProvider.getPool()),
             IAaveProtocolDataProvider(aaveProvider.getPoolDataProvider()),
-            USDC,
             address(executor)
         );
 
-        IVaultV2 wrapper = IVaultV2(MORPHO_USDC_WRAPPER);
-        address liquidityAdapter = wrapper.liquidityAdapter();
-        address child = IMorphoVaultV1Adapter(liquidityAdapter).morphoVaultV1();
-        ForkMorphoEligibility eligibility = new ForkMorphoEligibility(child);
-        morpho = new MorphoVaultV2Adapter(
-            wrapper,
-            IVaultV2Factory(MORPHO_VAULT_V2_FACTORY),
-            IMorphoVaultV1AdapterFactory(MORPHO_V1_ADAPTER_FACTORY),
-            eligibility,
-            address(executor)
-        );
+        morpho = new MorphoVaultV2Adapter(eligibility, address(executor));
+        evault =
+            new EulerEVaultAdapter(IEulerEVaultFactory(EULER_EVAULT_FACTORY), address(executor));
+        earn = new EulerEarnAdapter(IEulerEarnFactory(EULER_EARN_FACTORY), address(executor));
+        capy = new CapyFiAdapter(address(executor), ICapyFiComptroller(CAPY_COMPTROLLER));
 
-        evault = new EulerEVaultAdapter(
-            IEulerEVaultFactory(EULER_EVAULT_FACTORY),
-            IERC4626(EULER_EVAULT_USDC),
-            USDC,
-            address(executor)
-        );
-        earn = new EulerEarnAdapter(
-            IEulerEarnFactory(EULER_EARN_FACTORY),
-            IERC4626(EULER_EARN_USDC),
-            USDC,
-            address(executor)
-        );
-        capy = new CapyFiAdapter(
-            address(executor), ICapyFiComptroller(CAPY_COMPTROLLER), ICapyFiCaToken(CAPY_USDC), USDC
-        );
-
-        IYieldAdapter[5] memory adapters = [
-            IYieldAdapter(address(aave)),
-            IYieldAdapter(address(morpho)),
-            IYieldAdapter(address(evault)),
-            IYieldAdapter(address(earn)),
-            IYieldAdapter(address(capy))
+        adapters = [address(aave), address(morpho), address(evault), address(earn), address(capy)];
+        // Aave's venue is its reserve asset; every other protocol's venue is its share token.
+        vaults = [USDC, MORPHO_USDC_WRAPPER, EULER_EVAULT_USDC, EULER_EARN_USDC, CAPY_USDC];
+        Protocol[5] memory protocols = [
+            Protocol.AAVE, Protocol.MORPHO, Protocol.EULER_EVK, Protocol.EULER_EARN, Protocol.CAPYFI
         ];
-        IGrowYieldAdapterRegistry.AdapterConfig[] memory configs =
-            new IGrowYieldAdapterRegistry.AdapterConfig[](adapters.length);
-        for (uint256 i; i < adapters.length; ++i) {
-            configs[i] = IGrowYieldAdapterRegistry.AdapterConfig({
-                adapter: address(adapters[i]), canDeposit: true, canRedeem: true
+
+        IGrowYieldAdapterRegistry.VaultConfig[] memory configs =
+            new IGrowYieldAdapterRegistry.VaultConfig[](5);
+        for (uint256 i; i < 5; ++i) {
+            configs[i] = IGrowYieldAdapterRegistry.VaultConfig({
+                adapter: adapters[i],
+                vault: vaults[i],
+                protocol: protocols[i],
+                canDeposit: true,
+                canRedeem: true
             });
         }
-        GrowYieldAdapterRegistry registry = new GrowYieldAdapterRegistry(address(executor), configs);
-        executor.initializeRegistry(registry);
+        registry.addVaults(configs);
 
+        // Admission is the whole enablement: the account only approves its tokens.
         vm.startPrank(account);
-        for (uint256 i; i < adapters.length; ++i) {
-            executor.setAdapterPolicy(
-                address(adapters[i]), VOLUME_LIMIT, VOLUME_LIMIT, uint48(1 days)
-            );
-            IERC20(adapters[i].positionToken()).approve(address(executor), type(uint256).max);
+        for (uint256 i; i < 5; ++i) {
+            IERC20(registry.venue(vaults[i]).positionToken)
+                .approve(address(executor), type(uint256).max);
         }
         IERC20(USDC).approve(address(executor), type(uint256).max);
         vm.stopPrank();
+    }
+
+    /// @dev Exercises every protocol's registrar dispatch against live Base deployments.
+    function _registrars(IPoolAddressesProviderAllAdaptersFork aaveProvider, address eligibility)
+        internal
+        view
+        returns (IGrowYieldAdapterRegistry.Registrars memory)
+    {
+        return IGrowYieldAdapterRegistry.Registrars({
+            aavePool: aaveProvider.getPool(),
+            aaveDataProvider: aaveProvider.getPoolDataProvider(),
+            morphoVaultFactory: MORPHO_VAULT_V2_FACTORY,
+            morphoAdapterFactory: MORPHO_V1_ADAPTER_FACTORY,
+            morphoEligibility: eligibility,
+            eulerEVaultFactory: EULER_EVAULT_FACTORY,
+            eulerEarnFactory: EULER_EARN_FACTORY,
+            capyFiComptroller: CAPY_COMPTROLLER
+        });
     }
 
     function test_fork_liveProtocolBindings_matchEveryAdapter() public view {
@@ -163,7 +173,8 @@ contract GrowYieldAllAdaptersForkTest is Test {
             IPoolAddressesProviderAllAdaptersFork(AAVE_ADDRESSES_PROVIDER);
         assertEq(address(aave.pool()), provider.getPool());
         assertEq(address(aave.dataProvider()), provider.getPoolDataProvider());
-        assertEq(aave.positionToken(), AAVE_USDC);
+        assertEq(aave.positionToken(USDC), AAVE_USDC);
+        assertEq(aave.asset(USDC), USDC);
 
         IVaultV2 wrapper = IVaultV2(MORPHO_USDC_WRAPPER);
         address liquidityAdapter = wrapper.liquidityAdapter();
@@ -175,7 +186,7 @@ contract GrowYieldAllAdaptersForkTest is Test {
                 .isMorphoVaultV1Adapter(liquidityAdapter)
         );
         assertEq(IMorphoVaultV1Adapter(liquidityAdapter).parentVault(), address(wrapper));
-        assertEq(IERC4626(morpho.child()).asset(), USDC);
+        assertEq(IERC4626(IMorphoVaultV1Adapter(liquidityAdapter).morphoVaultV1()).asset(), USDC);
 
         assertTrue(IEulerEVaultFactory(EULER_EVAULT_FACTORY).isProxy(EULER_EVAULT_USDC));
         assertTrue(IEulerEarnFactory(EULER_EARN_FACTORY).isVault(EULER_EARN_USDC));
@@ -192,32 +203,34 @@ contract GrowYieldAllAdaptersForkTest is Test {
         deal(USDC, account, REBALANCE_AMOUNT + IDLE_AMOUNT);
 
         Operation[] memory first = new Operation[](1);
-        first[0] = _deposit(aave, AmountMode.EXACT, REBALANCE_AMOUNT);
+        first[0] = _deposit(USDC, AmountMode.EXACT, REBALANCE_AMOUNT);
         vm.prank(account);
         executor.execute(first);
         assertEq(IERC20(USDC).balanceOf(account), IDLE_AMOUNT);
 
-        _rebalance(aave, morpho);
-        _rebalance(morpho, evault);
-        _rebalance(evault, earn);
-        _rebalance(earn, capy);
-        _rebalance(capy, aave);
+        _rebalance(USDC, MORPHO_USDC_WRAPPER);
+        _rebalance(MORPHO_USDC_WRAPPER, EULER_EVAULT_USDC);
+        _rebalance(EULER_EVAULT_USDC, EULER_EARN_USDC);
+        _rebalance(EULER_EARN_USDC, CAPY_USDC);
+        _rebalance(CAPY_USDC, USDC);
 
         Operation[] memory exit = new Operation[](1);
-        exit[0] = _redeem(aave);
+        exit[0] = _redeem(USDC);
         vm.prank(account);
         executor.execute(exit);
 
-        assertEq(IERC20(aave.positionToken()).balanceOf(account), 0);
-        assertEq(IERC20(morpho.positionToken()).balanceOf(account), 0);
-        assertEq(IERC20(evault.positionToken()).balanceOf(account), 0);
-        assertEq(IERC20(earn.positionToken()).balanceOf(account), 0);
-        assertEq(IERC20(capy.positionToken()).balanceOf(account), 0);
+        for (uint256 i; i < 5; ++i) {
+            assertEq(IERC20(_position(vaults[i])).balanceOf(account), 0);
+        }
         assertGe(IERC20(USDC).balanceOf(account), IDLE_AMOUNT + (REBALANCE_AMOUNT * 97) / 100);
         _assertNoAdapterResiduals();
     }
 
-    function _rebalance(IYieldAdapter from, IYieldAdapter to) internal {
+    function _position(address vault) internal view returns (address) {
+        return registry.venue(vault).positionToken;
+    }
+
+    function _rebalance(address from, address to) internal {
         Operation[] memory ops = new Operation[](2);
         ops[0] = _redeem(from);
         ops[1] = _deposit(to, AmountMode.PREVIOUS_OUTPUT, 0);
@@ -225,18 +238,18 @@ contract GrowYieldAllAdaptersForkTest is Test {
         vm.prank(account);
         executor.execute(ops);
 
-        assertEq(IERC20(from.positionToken()).balanceOf(account), 0);
-        assertGt(IERC20(to.positionToken()).balanceOf(account), 0);
+        assertEq(IERC20(_position(from)).balanceOf(account), 0);
+        assertGt(IERC20(_position(to)).balanceOf(account), 0);
         assertEq(IERC20(USDC).balanceOf(account), IDLE_AMOUNT);
     }
 
-    function _deposit(IYieldAdapter adapter, AmountMode mode, uint256 amount)
+    function _deposit(address vault, AmountMode mode, uint256 amount)
         internal
         pure
         returns (Operation memory)
     {
         return Operation({
-            adapter: adapter,
+            vault: vault,
             kind: OperationKind.DEPOSIT,
             sourceToken: USDC,
             amount: amount,
@@ -245,11 +258,11 @@ contract GrowYieldAllAdaptersForkTest is Test {
         });
     }
 
-    function _redeem(IYieldAdapter adapter) internal view returns (Operation memory) {
+    function _redeem(address vault) internal view returns (Operation memory) {
         return Operation({
-            adapter: adapter,
+            vault: vault,
             kind: OperationKind.REDEEM,
-            sourceToken: adapter.positionToken(),
+            sourceToken: _position(vault),
             amount: 0,
             amountMode: AmountMode.FULL_BALANCE,
             minAmountOut: 1
@@ -257,17 +270,9 @@ contract GrowYieldAllAdaptersForkTest is Test {
     }
 
     function _assertNoAdapterResiduals() internal view {
-        IYieldAdapter[5] memory adapters = [
-            IYieldAdapter(address(aave)),
-            IYieldAdapter(address(morpho)),
-            IYieldAdapter(address(evault)),
-            IYieldAdapter(address(earn)),
-            IYieldAdapter(address(capy))
-        ];
-        for (uint256 i; i < adapters.length; ++i) {
-            address adapter = address(adapters[i]);
-            assertEq(IERC20(USDC).balanceOf(adapter), 0);
-            assertEq(IERC20(adapters[i].positionToken()).balanceOf(adapter), 0);
+        for (uint256 i; i < 5; ++i) {
+            assertEq(IERC20(USDC).balanceOf(adapters[i]), 0);
+            assertEq(IERC20(_position(vaults[i])).balanceOf(adapters[i]), 0);
         }
     }
 }

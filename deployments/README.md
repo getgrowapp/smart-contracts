@@ -28,4 +28,9 @@ Each file contains:
 | `executor` | `GrowYieldExecutor` address |
 | `policyModule` | `GrowYieldPolicyModule` address |
 | `registry` | `GrowYieldAdapterRegistry` address (wired into the executor) |
-| `adapterAddresses` / `adapterKinds` / `adapterCanDeposit` / `adapterCanRedeem` | Parallel arrays describing each fixed adapter |
+| `registryPendingOwner` | Governance address offered registry ownership; it must call `acceptOwnership()` |
+| `adapterAddresses` / `adapterKinds` | Parallel arrays: one adapter per supported protocol |
+| `vaultAddresses` / `vaultKinds` / `vaultAdapters` / `vaultCanDeposit` / `vaultCanRedeem` | Parallel arrays: the venue set admitted at deploy time, and the protocol adapter each routes through |
+
+Only a real broadcast writes the artifact; a simulation logs the plan and leaves the file
+alone, so a dry run cannot overwrite the record of what is live.
