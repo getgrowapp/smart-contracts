@@ -20,32 +20,13 @@ import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 
 /// @title GrowYieldExecutor
 /// @notice Routes a caller's own funds through venues this same contract has admitted.
-/// @dev Admission and execution are one contract: `GrowYieldExecutor` *is* the venue registry,
-///      inheriting `GrowYieldAdapterRegistry`. There is no address to keep in sync, no
-///      initializer window, and no way to express an executor pointed at a registry that does
-///      not name it back. Which venues exist is a single governance decision by the owner, not
-///      a per-account configuration.
+/// @dev Admission and execution are one contract: this *is* the venue registry, inheriting
+///      `GrowYieldAdapterRegistry`. Permissionless by construction — an operation pulls the
+///      source token from `msg.sender` and credits every output back to `msg.sender`.
 ///
-///      Two authorities, deliberately distinct and required to be different addresses:
-///      the **owner** (`Ownable2Step`) admits venues and re-enables paused deposits; the
-///      immutable **risk guardian** can only pause deposits. Neither can move funds or block a
-///      redemption.
-///
-///      The executor holds no per-account state and no per-account permission. It is
-///      permissionless by construction: an operation pulls the source token from `msg.sender` and
-///      credits every output back to `msg.sender`, so a caller can only ever move their own
-///      funds, and only into or out of an admitted venue.
-///
-///      What still constrains an operation: the venue must be admitted and permit the direction,
-///      the adapter's runtime code must match the hash pinned at admission, a deposit's adapter
-///      must still derive the pinned `(asset, positionToken)` pair, the source token must match
-///      the venue and direction, output must clear both the caller's signed floor and a
-///      loss-capped preview, and no residual may be left on the adapter.
-///
-///      Deposit-side wind-down is reversible on purpose: the risk guardian or the owner may
-///      pause a venue's deposits, and only the owner may re-enable them. Protecting is fast and
-///      unilateral; re-exposing accounts is a governance decision. Redemptions are never
-///      pausable, so a paused venue is one nobody can enter and everybody can leave.
+///      Two distinct authorities: the owner (`Ownable2Step`) admits venues and un-pauses; the
+///      immutable risk guardian can only pause deposits. Neither can move funds or block a
+///      redemption, and redemptions are never pausable.
 /// @custom:security-contact security@getgrowapp.co
 contract GrowYieldExecutor is
     GrowYieldAdapterRegistry,
@@ -71,9 +52,9 @@ contract GrowYieldExecutor is
     /// @param maxLossBps_ Maximum shortfall from preview, in basis points; must be nonzero so
     ///        venue rounding against the preview cannot brick operations.
     /// @param riskGuardian_ Address able to pause venue deposits; cannot un-pause, and must
-    ///        differ from `owner_` so that protection and re-exposure are never one key.
+    ///        differ from `owner_`.
     /// @param owner_ Address authorized to admit venues and un-pause; should be a Safe or
-    ///        TimelockController, or a deployer that hands over in the same transaction.
+    ///        TimelockController.
     /// @param registrars_ Canonical protocol registrars pinned for this contract's lifetime.
     constructor(
         uint16 maxLossBps_,
@@ -92,7 +73,7 @@ contract GrowYieldExecutor is
 
     /// @inheritdoc IGrowYieldExecutor
     function pauseVaultDeposits(address vault) external {
-        // Either authority may protect. Only the owner may re-expose (see `unpause`).
+        // Either authority may protect; only the owner may re-expose.
         if (msg.sender != riskGuardian && msg.sender != owner()) revert NotAuthorizedToPause();
         // Reject a mistyped address instead of recording a pause that protects nothing.
         if (_venues[vault].adapter == address(0)) revert VenueNotAllowed();
@@ -146,21 +127,13 @@ contract GrowYieldExecutor is
         if (venue.adapter == address(0) || !venuePermits) revert VenueNotAllowed();
         if (isDeposit && depositsPaused[vault]) revert DepositsPaused();
 
-        // this prevents ERC-7928 malicious contract upgrades from causing loss of funds.
-        // The hash is carried in the venue record, so resolving a venue costs one call.
+        // Blocks ERC-7928 adapter upgrades from causing loss of funds.
         if (venue.adapter.codehash != venue.adapterCodeHash) revert AdapterCodeChanged();
 
         IYieldAdapter adapter = IYieldAdapter(venue.adapter);
-        // The adapter serves every venue of its protocol and pins none of them, so the admitted
-        // pair is the only binding between this vault and its tokens. Re-deriving and comparing
-        // fails closed when protocol governance re-points a venue (an Aave reserve's aToken, a
-        // drifted `asset()`) after admission.
-        //
-        // Deposits only, deliberately. A deposit must never create a position in a token the
-        // registry did not admit, but a redemption operates on the pinned position token the
-        // account already holds and returns the pinned asset — blocking it on drift would trap
-        // the account in the very venue that just went bad. Exits stay open for as long as the
-        // venue itself permits them.
+        // The admitted pair is the only binding between this vault and its tokens, so re-deriving
+        // it fails closed when protocol governance re-points a venue after admission. Deposits
+        // only: blocking a redemption on drift would trap the account in the bad venue.
         if (
             isDeposit
                 && (adapter.asset(vault) != venue.asset
@@ -185,9 +158,8 @@ contract GrowYieldExecutor is
 
         sourceToken.safeTransferFrom(msg.sender, venue.adapter, amount);
         uint256 sent = sourceToken.balanceOf(venue.adapter) - adapterSourceBefore;
-        // Rebasing position tokens (aTokens) settle transfers in scaled units and may
-        // deliver one wei off the requested amount; larger deviations are fee-on-transfer
-        // behavior and unsupported. The adapter operates on the measured amount.
+        // Rebasing position tokens (aTokens) may settle one wei off; larger deviations are
+        // fee-on-transfer behavior and unsupported.
         if (sent + 1 < amount || sent > amount + 1) revert UnsupportedToken();
 
         uint256 expected =
@@ -200,11 +172,9 @@ contract GrowYieldExecutor is
             adapter.redeem(vault, sent, msg.sender);
         }
 
-        // The adapter received exactly `sent` and must consume exactly `sent`: too much left
-        // behind is a stranded residual, too little is a donation swept out of an unrelated
-        // balance. One wei either way is rebasing-token rounding (aTokens burn in scaled
-        // units). Checking both directions here, on the registry-pinned token, is what lets
-        // the adapters stay venue-agnostic instead of re-deriving a token to measure.
+        // The adapter must consume exactly `sent`: too much left behind is a stranded residual,
+        // too little is a donation swept from an unrelated balance. One wei either way is
+        // rebasing-token rounding.
         uint256 sourceAfter = sourceToken.balanceOf(venue.adapter);
         if (
             sourceAfter + 1 < adapterSourceBefore || sourceAfter > adapterSourceBefore + 1

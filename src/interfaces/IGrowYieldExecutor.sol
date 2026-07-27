@@ -9,9 +9,8 @@ enum OperationKind {
     REDEEM
 }
 
-// Maximum operations in one `execute` batch. Single source of truth for batch size: the
-// executor enforces it directly and the policy library derives its calldata ceiling from it,
-// so the two can never drift apart.
+// Maximum operations in one `execute` batch. Single source of truth: the executor enforces it
+// directly and the policy library derives its calldata ceiling from it.
 uint256 constant MAX_OPS = 4;
 
 /// @notice How an operation resolves its source amount.
@@ -22,18 +21,17 @@ enum AmountMode {
 }
 
 /// @notice One operation against a venue admitted by this executor's registry.
-/// @dev The venue names itself, not its adapter: the registry resolves `vault` to the protocol
-///      adapter, the pinned token pair, and the permitted directions, so a signed operation
-///      cannot pair a venue with an adapter the registry did not admit it under.
+/// @dev The venue names itself, not its adapter: the registry resolves `vault` to the adapter,
+///      the pinned token pair, and the permitted directions, so a signed operation cannot pair a
+///      venue with an adapter the registry did not admit it under.
 /// @param vault Venue identifier, as its protocol keys it (see `IYieldAdapter`).
 /// @param kind Deposit or redeem direction.
 /// @param sourceToken Token pulled from the caller and verified against the venue's pinned pair.
 /// @param amount Exact source amount when `amountMode` is `EXACT`; otherwise it must be zero.
 /// @param amountMode Explicit source-amount resolution strategy.
-/// @param minAmountOut Absolute floor for the output credited to the caller. Signed by
-///        whoever authorized the operation — for automation that is a policy owner (session
-///        key), not the account owner, so this bounds an honest signer's slippage and not a
-///        compromised one. `maxLossBps` is the defense that does not depend on the signer.
+/// @param minAmountOut Absolute floor for the output credited to the caller. Signed by whoever
+///        authorized the operation — for automation a policy owner, not the account owner — so it
+///        bounds an honest signer's slippage only. `maxLossBps` does not depend on the signer.
 struct Operation {
     address vault;
     OperationKind kind;
@@ -98,18 +96,16 @@ interface IGrowYieldExecutor is IGrowYieldAdapterRegistry {
     error DepositsPaused();
 
     /// @notice Disable new deposits into a venue, for every caller.
-    /// @dev Callable by the immutable risk guardian (fast incident response) or by the registry
-    ///      owner (governance, so the pause does not depend on one hot key). Redemptions remain
-    ///      available so callers can always exit supported positions. The venue must be admitted
-    ///      by this executor's registry, so a mistyped address fails loudly rather than recording
-    ///      a pause that protects nothing. Pausing one venue never affects siblings.
+    /// @dev Callable by the immutable risk guardian or by the registry owner, so the pause does
+    ///      not depend on one hot key. Redemptions remain available. The venue must already be
+    ///      admitted, so a mistyped address fails loudly rather than recording a pause that
+    ///      protects nothing. Pausing one venue never affects siblings.
     /// @param vault Venue whose deposits are disabled.
     function pauseVaultDeposits(address vault) external;
 
     /// @notice Re-enable deposits into a paused venue.
-    /// @dev Registry owner only — deliberately not the guardian. Protecting is fast and
-    ///      unilateral; re-exposing accounts to a venue is a governance decision. This is what
-    ///      keeps a false-positive pause from being an unrecoverable state.
+    /// @dev Registry owner only, deliberately not the guardian: protecting is unilateral,
+    ///      re-exposing accounts is a governance decision.
     /// @param vault Venue whose deposits are re-enabled.
     function unpauseVaultDeposits(address vault) external;
 

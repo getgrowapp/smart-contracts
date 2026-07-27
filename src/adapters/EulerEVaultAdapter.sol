@@ -6,9 +6,8 @@ import {AbstractEulerAdapter} from "./AbstractEulerAdapter.sol";
 
 /// @title EulerEVaultAdapter
 /// @notice GrowYield adapter for every Euler EVK (EVault) market of one GenericFactory.
-/// @dev Authenticity is proven by the pinned EVK GenericFactory's `isProxy` registry, re-checked
-///      on every operation so a vault the factory no longer recognizes fails closed. The venue's
-///      underlying is pinned by the registry and re-verified by the executor.
+/// @dev Authenticity is the pinned EVK GenericFactory's `isProxy` registry, re-checked every
+///      operation so a vault the factory no longer recognizes fails closed.
 /// @custom:security-contact security@getgrowapp.co
 contract EulerEVaultAdapter is AbstractEulerAdapter {
     /// @notice Canonical EVK GenericFactory used to authenticate vault proxies.

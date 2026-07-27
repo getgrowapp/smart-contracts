@@ -11,12 +11,10 @@ import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
 /// @title CapyFiAdapter
 /// @notice GrowYield adapter for every Compound-v2-style CapyFi caToken market of one Comptroller.
-/// @dev `vault` is the caToken market, which is also its own position token. The adapter pins only
-///      the executor and the canonical Comptroller. Every operation re-checks that the market
-///      still belongs to the pinned Comptroller and is still listed; delisting fails closed.
-///      Comptroller checks prove CapyFi protocol authenticity only — Grow risk approval is
-///      registry admission, which also pins the market's underlying for the executor to verify.
-///      Non-zero Compound mint/redeem return codes revert.
+/// @dev `vault` is the caToken market, which is also its own position token. Every operation
+///      re-checks that the market still belongs to the pinned Comptroller and is still listed, so
+///      delisting fails closed. That proves CapyFi authenticity only — Grow risk approval is
+///      registry admission, which also pins the underlying. Non-zero mint/redeem codes revert.
 /// @custom:security-contact security@getgrowapp.co
 contract CapyFiAdapter is IYieldAdapter {
     using SafeERC20 for IERC20;
@@ -125,8 +123,8 @@ contract CapyFiAdapter is IYieldAdapter {
         uint256 redeemError = ICapyFiCaToken(vault).redeem(shares);
         if (redeemError != 0) revert RedeemFailed(redeemError);
 
-        // Consume exactly the caller-attributed caToken amount. Pre-existing donations
-        // are deliberately not swept into an unrelated account's redemption.
+        // Consume exactly the caller-attributed caTokens; donations are not swept into an
+        // unrelated account's redemption.
         if (IERC20(vault).balanceOf(address(this)) != sharesBefore - shares) {
             revert ResidualBalance();
         }

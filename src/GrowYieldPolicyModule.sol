@@ -72,10 +72,9 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
 
     mapping(address account => AccountConfig) private _accountConfigs;
 
-    /// @dev Pins the gas and fee ceilings immutably. The executor and the sponsoring paymaster
-    ///      are per-account and account-settable, so neither is fixed here: a single immutable
-    ///      paymaster would halt every account's automation the day that sponsor is retired,
-    ///      recoverable only by reinstalling the module on every account.
+    /// @dev Pins the gas and fee ceilings immutably. The executor and paymaster are per-account
+    ///      and account-settable, so retiring a sponsor does not require a module reinstall on
+    ///      every account.
     constructor(
         uint128 maxVerificationGas_,
         uint128 maxCallGas_,
@@ -240,9 +239,8 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
     }
 
     /// @notice Configure the installing account's entity, policy-owner set, and executor.
-    /// @dev One Grow entity is supported per account. Uninstall it before choosing another.
-    ///      This single call is the account's whole opt-in: the executor names the registry, the
-    ///      registry names the venues, and there is nothing further to configure per venue.
+    /// @dev One Grow entity per account; uninstall before choosing another. This single call is
+    ///      the account's whole opt-in — there is nothing further to configure per venue.
     function onInstall(bytes calldata data) external override {
         if (_accountConfigs[msg.sender].entityId != 0) revert PolicyAlreadyInstalled();
 
@@ -298,20 +296,17 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
         emit OwnerAdded(account, owner);
     }
 
-    /// @dev Pins the single executor whose `execute` batches this account's policy accepts.
-    ///
-    ///      This address is load-bearing well beyond routing: once set, a policy owner (session
-    ///      key) can sign calls to it against the account's standing allowance. An owner typo
-    ///      here would therefore become a session-key-exploitable drain, so the candidate must
-    ///      answer the executor surface coherently — a guardian, an owner, and at least one
-    ///      admitted venue. That is a typo filter, not a trust boundary: the owner is trusted,
-    ///      and an owner determined to approve a hostile contract still can.
+    /// @dev Pins the single executor whose `execute` batches this account's policy accepts. Once
+    ///      set, a policy owner (session key) can sign calls to it against the account's standing
+    ///      allowance, so a typo here would be a session-key-exploitable drain. The candidate must
+    ///      therefore answer the executor surface coherently. That is a typo filter, not a trust
+    ///      boundary: an owner determined to approve a hostile contract still can.
     function _setExecutor(address account, address executor) private {
         if (executor.code.length == 0) revert InvalidConfiguration();
 
         try IGrowYieldExecutor(executor).vaultCount() returns (uint256 vaults) {
             // An executor with no admitted venue is unusable, so approving one is always a
-            // mistake worth catching at configuration time.
+            // mistake.
             if (
                 vaults == 0 || IGrowYieldExecutor(executor).riskGuardian() == address(0)
                     || Ownable(executor).owner() == address(0)

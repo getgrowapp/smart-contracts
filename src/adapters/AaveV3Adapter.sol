@@ -10,22 +10,16 @@ import {IYieldAdapter} from "../interfaces/IYieldAdapter.sol";
 
 /// @title AaveV3Adapter
 /// @notice Aave V3 adapter serving every reserve of one pool.
-/// @dev Aave keys reserves by underlying asset and shares a single pool across all of them, so
-///      `vault` is the reserve's underlying asset and the position token is resolved from the
-///      pinned data provider on demand. Only the executor may deposit or redeem. Previews are
-///      identity because Aave mints and burns aTokens at par. Withdrawals remain subject to
-///      Aave liquidity and governance controls.
+/// @dev Aave keys reserves by underlying asset, so `vault` is the reserve's underlying and the
+///      position token is resolved from the pinned data provider on demand. Previews are identity
+///      because Aave mints and burns aTokens at par. Withdrawals remain subject to Aave liquidity
+///      and governance controls.
 ///
-///      The adapter pins no reserve, so it cannot detect a reserve whose aToken was re-pointed.
-///      That binding lives in the registry, which pins each venue's `(asset, positionToken)`
-///      pair at admission; the executor re-derives it here and fails closed on drift.
-///
-///      Deposit and redeem deliberately keep no accounting of their own. The executor measures
-///      the adapter's balance of the registry-pinned source token on both sides of the call and
-///      requires it to consume exactly what it was sent, so residuals and donation-sweeping are
-///      caught against the token the executor actually transferred. An adapter-side check would
-///      have to re-derive that token from the data provider, which is precisely the value that
-///      goes stale when a reserve is re-pointed.
+///      The adapter pins no reserve, so it cannot detect a re-pointed aToken; that binding is the
+///      registry's pinned `(asset, positionToken)` pair, which the executor re-derives and fails
+///      closed on. Deposit and redeem keep no accounting of their own for the same reason — the
+///      executor measures residuals against the pinned token, which an adapter-side check would
+///      have to re-derive from the very data provider that goes stale.
 /// @custom:security-contact security@getgrowapp.co
 contract AaveV3Adapter is IYieldAdapter {
     using SafeERC20 for IERC20;
