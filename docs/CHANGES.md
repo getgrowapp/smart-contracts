@@ -1,4 +1,26 @@
-# Post-deployment vault admission + owner-signed registry selection
+# Change log
+
+> **Superseding change — executor/registry coupling + policy simplification.**
+> Sections 1–N below describe the *previous* refactor. Two of its decisions have since been
+> reversed for simplicity:
+>
+> - **Per-account registry selection is gone.** The executor now deploys its own registry in
+>   its constructor; `registry` and `executor` are immutable on both sides and nothing is
+>   settable. `setAccountRegistry` / `accountRegistry` are removed.
+> - **Per-account, per-venue epoch policy is gone.** `setVaultPolicy`, `resetVaultPolicy`,
+>   `vaultPolicy`, directional volume limits, epochs, and the `BudgetExceeded` /
+>   `UnboundedPolicy` / `EpochDurationChangeRequiresReset` errors are removed. Admission is
+>   the only venue gate; the executor holds no per-account state and is permissionless.
+> - **The account approves one executor, on the policy module.** Install data is now
+>   `abi.encode(entityId, policyOwners, executor)`, and `policy.setExecutor` (owner path only)
+>   replaces it. One signed transaction is the whole opt-in.
+>
+> Consequence to weigh: a compromised policy owner can move the account's full balance
+> between admitted venues without a volume cap, bleeding up to `maxLossBps` per hop. Funds
+> cannot leave the account. See "What is deliberately *not* constrained" in
+> [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+## Previously: post-deployment vault admission + owner-signed registry selection
 
 Replaces the constructor-fixed adapter registry with an append-only registry whose venues must
 be authenticated by deployment-pinned protocol registrars, and moves the executor's single

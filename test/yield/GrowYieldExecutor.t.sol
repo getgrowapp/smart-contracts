@@ -21,7 +21,7 @@ import {
     IGrowYieldAdapterRegistry,
     Protocol
 } from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
-import {MockAavePool, MockUnderlying} from "../invariant/MockYieldVenues.sol";
+import {MockAToken, MockAavePool, MockUnderlying} from "../invariant/MockYieldVenues.sol";
 import {MockFeeToken, MockMutableAaveDataProvider} from "./mocks/MockVaultV2Stack.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
@@ -92,141 +92,82 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         return executor.execute(ops);
     }
 
-    /// @dev A second registry over this executor admitting only `aaveVaultOther`, so an
-    ///      account's registry choice observably changes which venues it may use.
-    function _narrowRegistry() private returns (GrowYieldAdapterRegistry narrow) {
-        narrow = _deployRegistry(address(this));
-        IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
-            new IGrowYieldAdapterRegistry.VaultConfig[](1);
-        vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
-            address(aaveAdapter), aaveVaultOther, Protocol.AAVE, true, true
-        );
-        narrow.addVaults(vaults);
-    }
-
     function test_constructor_rejectsZeroMaxLossBps() public {
         vm.expectRevert(IGrowYieldExecutor.Invalid.selector);
-        new GrowYieldExecutor(0, riskGuardian);
+        new GrowYieldExecutor(0, riskGuardian, address(this), _mockRegistrars());
     }
 
-    function test_execute_revertsWhenAccountRegistryUnset() public {
-        address stranger = makeAddr("noRegistry");
-        Operation[] memory ops = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6));
+    function test_constructor_rejectsLossCapAboveCeiling() public {
+        uint16 overCeiling = executor.MAX_LOSS_BPS_CEILING() + 1;
+        vm.expectRevert(IGrowYieldExecutor.Invalid.selector);
+        new GrowYieldExecutor(overCeiling, riskGuardian, address(this), _mockRegistrars());
+    }
+
+    function test_constructor_rejectsZeroRiskGuardian() public {
+        vm.expectRevert(IGrowYieldExecutor.Invalid.selector);
+        new GrowYieldExecutor(MAX_LOSS_BPS, address(0), address(this), _mockRegistrars());
+    }
+
+    /// @dev The executor and the registry it deployed name each other, immutably and with
+    ///      nothing settable. There is no per-account registry selection to get wrong.
+    function test_executorAndRegistryArePermanentlyBound() public {
+        assertEq(address(executor.registry()), address(registry));
+        assertEq(registry.executor(), address(executor));
+
+        // A second executor gets its own registry over the same venue infrastructure.
+        GrowYieldExecutor other = _deployExecutor(address(this));
+        assertNotEq(address(other.registry()), address(registry));
+        assertEq(other.registry().executor(), address(other));
+    }
+
+    /// @dev No account opt-in exists on the executor: admission alone makes a venue usable, and
+    ///      any caller may move their own funds through it.
+    function test_execute_needsNoPerAccountEnablement() public {
+        address stranger = makeAddr("stranger");
+        underlying.mint(stranger, 10e6);
 
         vm.prank(stranger);
-        vm.expectRevert(IGrowYieldExecutor.RegistryNotSet.selector);
+        underlying.approve(address(executor), type(uint256).max);
+
+        Operation[] memory ops = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 10e6));
+        vm.prank(stranger);
         executor.execute(ops);
+
+        assertEq(aavePool.aToken().balanceOf(stranger), 10e6);
+        assertEq(aavePool.aToken().balanceOf(account), 0, "no other account touched");
     }
 
-    function test_setAdapterPolicy_revertsWhenAccountRegistryUnset() public {
-        address stranger = makeAddr("noRegistry");
-
-        vm.prank(stranger);
-        vm.expectRevert(IGrowYieldExecutor.RegistryNotSet.selector);
-        executor.setVaultPolicy(aaveVault, 1 ether, 1 ether, 1 days);
-
-        vm.prank(stranger);
-        vm.expectRevert(IGrowYieldExecutor.RegistryNotSet.selector);
-        executor.resetVaultPolicy(aaveVault, 1 ether, 1 ether, 1 days);
-    }
-
-    /// @dev The selection is keyed by `msg.sender`: no caller can retarget another account.
-    function test_setAccountRegistry_isPerAccountAndSelfKeyed() public {
-        GrowYieldAdapterRegistry narrow = _narrowRegistry();
-        address other = makeAddr("otherAccount");
-
-        vm.expectEmit(true, true, false, false, address(executor));
-        emit IGrowYieldExecutor.AccountRegistrySet(other, address(narrow));
-        vm.prank(other);
-        executor.setAccountRegistry(narrow);
-
-        assertEq(address(executor.accountRegistry(other)), address(narrow));
-        assertEq(address(executor.accountRegistry(account)), address(registry), "unchanged");
-    }
-
-    function test_setAccountRegistry_rejectsNonRegistry() public {
-        vm.prank(account);
-        vm.expectRevert(IGrowYieldExecutor.Invalid.selector);
-        executor.setAccountRegistry(GrowYieldAdapterRegistry(makeAddr("eoa")));
-
-        // A registry that authorizes a different executor cannot be selected here.
-        GrowYieldExecutor otherExecutor = new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian);
-        GrowYieldAdapterRegistry foreign = new GrowYieldAdapterRegistry(
-            address(otherExecutor),
-            address(this),
-            IGrowYieldAdapterRegistry.Registrars({
-                aavePool: address(aavePool),
-                aaveDataProvider: address(aaveDataProvider),
-                morphoVaultFactory: address(0),
-                morphoAdapterFactory: address(0),
-                morphoEligibility: address(0),
-                eulerEVaultFactory: address(0),
-                eulerEarnFactory: address(0),
-                capyFiComptroller: address(0)
-            })
-        );
+    /// @dev An executor bound to a registry that never admitted the venue rejects it, which is
+    ///      what makes the executor choice — made once on the policy module — meaningful.
+    function test_execute_rejectsVenueAdmittedOnlyByAnotherExecutorsRegistry() public {
+        GrowYieldExecutor other = _deployExecutor(address(this));
+        underlying.mint(account, 10e6);
 
         vm.prank(account);
-        vm.expectRevert(IGrowYieldExecutor.Invalid.selector);
-        executor.setAccountRegistry(foreign);
-
-        // An adapter also reports `executor() == executor`; the venue-count probe rejects it
-        // here (reverting inside the probe, which has no registry interface) instead of
-        // silently deferring the failure to the account's first operation.
-        vm.prank(account);
-        vm.expectRevert();
-        executor.setAccountRegistry(GrowYieldAdapterRegistry(address(aaveAdapter)));
-
-        // An empty registry is unusable, so selecting one fails loudly.
-        GrowYieldAdapterRegistry empty = _deployRegistry(address(this));
-        vm.prank(account);
-        vm.expectRevert(IGrowYieldExecutor.Invalid.selector);
-        executor.setAccountRegistry(empty);
-    }
-
-    /// @dev Reselecting a registry re-gates execution immediately; per-adapter limits the
-    ///      account already signed for survive, because admission and limits are independent.
-    function test_setAccountRegistry_reselectionRegatesVenues() public {
-        underlying.mint(account, 100e6);
-        _approveMax(address(underlying));
-
-        GrowYieldAdapterRegistry narrow = _narrowRegistry();
-        vm.prank(account);
-        executor.setAccountRegistry(narrow);
+        underlying.approve(address(other), type(uint256).max);
 
         Operation[] memory ops = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 10e6));
         vm.prank(account);
         vm.expectRevert(IGrowYieldExecutor.VenueNotAllowed.selector);
-        executor.execute(ops);
-
-        // The limits set under the original registry are intact once it is reselected.
-        (uint256 depositLimit,,,,,) = executor.vaultPolicy(account, address(aaveAdapter));
-        assertEq(depositLimit, DEFAULT_VOLUME_LIMIT);
-
-        vm.prank(account);
-        executor.setAccountRegistry(registry);
-        _execute(ops);
-        assertEq(aavePool.aToken().balanceOf(account), 10e6);
+        other.execute(ops);
     }
 
-    function test_pauseVaultDeposits_rejectsForeignRegistryOrUnknownVenue() public {
-        // A registry that authorizes a different executor cannot be used to name a target.
-        GrowYieldExecutor otherExecutor = new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian);
-        vm.prank(riskGuardian);
-        vm.expectRevert(IGrowYieldExecutor.Invalid.selector);
-        otherExecutor.pauseVaultDeposits(registry, aaveVault);
+    function test_pauseVaultDeposits_rejectsUnknownVenueAndNonGuardian() public {
+        vm.prank(makeAddr("notGuardian"));
+        vm.expectRevert(IGrowYieldExecutor.OnlyRiskGuardian.selector);
+        executor.pauseVaultDeposits(aaveVault);
 
         // A venue this registry never admitted fails loudly rather than recording a no-op pause.
         vm.prank(riskGuardian);
         vm.expectRevert(IGrowYieldExecutor.VenueNotAllowed.selector);
-        executor.pauseVaultDeposits(registry, makeAddr("typo"));
+        executor.pauseVaultDeposits(makeAddr("typo"));
     }
 
     /// @dev Pausing one venue must not affect other venues of the same protocol, which share
     ///      the adapter.
     function test_pauseVaultDeposits_isPerVenueNotPerProtocol() public {
         vm.prank(riskGuardian);
-        executor.pauseVaultDeposits(registry, aaveVault);
+        executor.pauseVaultDeposits(aaveVault);
 
         assertTrue(executor.depositsPaused(aaveVault));
         assertFalse(executor.depositsPaused(aaveVaultOther), "sibling venue unaffected");
@@ -377,20 +318,35 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         _execute(_ops1(op));
     }
 
+    /// @dev Direction is fixed at admission, not per account: a redeem-only venue is one the
+    ///      registry owner admitted with `canDeposit == false`.
     function test_directionalGating_depositClosedExitOpen() public {
-        _seedAave(100e6);
-        vm.prank(account);
-        executor.setVaultPolicy(aaveVault, 0, DEFAULT_VOLUME_LIMIT, 1 days);
+        (address exitOnlyVault, MockAToken exitOnlyAToken) = _addAaveReserve();
+        IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
+            new IGrowYieldAdapterRegistry.VaultConfig[](1);
+        vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
+            address(aaveAdapter), exitOnlyVault, Protocol.AAVE, false, true
+        );
+        registry.addVaults(vaults);
 
-        underlying.mint(account, 1e6);
-        _approveMax(address(underlying));
-        Operation[] memory depositOps = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6));
+        MockUnderlying(exitOnlyVault).mint(account, 1e6);
+        vm.prank(account);
+        IERC20(exitOnlyVault).approve(address(executor), type(uint256).max);
+
+        Operation[] memory depositOps = _ops1(_op(exitOnlyVault, OperationKind.DEPOSIT, 1e6));
         vm.expectRevert(IGrowYieldExecutor.VenueNotAllowed.selector);
         _execute(depositOps);
 
-        _approveMax(address(aavePool.aToken()));
-        _execute(_ops1(_op(aaveVault, OperationKind.REDEEM, type(uint256).max)));
-        assertEq(aavePool.aToken().balanceOf(account), 0);
+        // The exit direction stays open: seed a position around the closed deposit path.
+        MockUnderlying(exitOnlyVault).mint(address(aavePool), 1e6);
+        vm.prank(address(aavePool));
+        exitOnlyAToken.mint(account, 1e6);
+        vm.prank(account);
+        IERC20(address(exitOnlyAToken)).approve(address(executor), type(uint256).max);
+        _execute(_ops1(_op(exitOnlyVault, OperationKind.REDEEM, 1e6)));
+        // 1e6 held from the rejected deposit, plus the 1e6 just redeemed.
+        assertEq(MockUnderlying(exitOnlyVault).balanceOf(account), 2e6);
+        assertEq(exitOnlyAToken.balanceOf(account), 0);
     }
 
     function test_execute_revertsEmptyBatch() public {
@@ -436,10 +392,17 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         MaliciousYieldAdapter malicious =
             new MaliciousYieldAdapter(underlying, address(executor), thief);
 
+        // Never admitted, so it has no pinned code hash and no venue routes through it.
+        underlying.mint(account, 1e6);
+        _approveMax(address(underlying));
+        Operation[] memory ops = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6));
+        ops[0].vault = address(malicious);
+
         vm.prank(account);
         vm.expectRevert(IGrowYieldExecutor.VenueNotAllowed.selector);
-        executor.setVaultPolicy(address(malicious), 1, 0, 1 days);
+        executor.execute(ops);
         assertEq(registry.adapterCodeHash(address(malicious)), bytes32(0));
+        assertEq(underlying.balanceOf(thief), 0);
     }
 
     // --- quantitative invariants ---
@@ -496,18 +459,14 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
     }
 
     function test_feeOnTransferSource_revertsUnsupportedToken() public {
-        GrowYieldExecutor feeExecutor = new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian);
         MockFeeToken feeToken = new MockFeeToken();
         MockAavePool feePool = new MockAavePool(MockUnderlying(address(feeToken)));
         MockMutableAaveDataProvider feeProvider =
             new MockMutableAaveDataProvider(address(feeToken), address(feePool.aToken()));
-        AaveV3Adapter feeAdapter = new AaveV3Adapter(
-            IAaveV3Pool(address(feePool)),
-            IAaveProtocolDataProvider(address(feeProvider)),
-            address(feeExecutor)
-        );
-        GrowYieldAdapterRegistry feeRegistry = new GrowYieldAdapterRegistry(
-            address(feeExecutor),
+
+        GrowYieldExecutor feeExecutor = new GrowYieldExecutor(
+            MAX_LOSS_BPS,
+            riskGuardian,
             address(this),
             IGrowYieldAdapterRegistry.Registrars({
                 aavePool: address(feePool),
@@ -520,19 +479,21 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
                 capyFiComptroller: address(0)
             })
         );
+        AaveV3Adapter feeAdapter = new AaveV3Adapter(
+            IAaveV3Pool(address(feePool)),
+            IAaveProtocolDataProvider(address(feeProvider)),
+            address(feeExecutor)
+        );
+
         IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
             new IGrowYieldAdapterRegistry.VaultConfig[](1);
         vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
             address(feeAdapter), address(feeToken), Protocol.AAVE, true, true
         );
-        feeRegistry.addVaults(vaults);
+        GrowYieldAdapterRegistry(address(feeExecutor.registry())).addVaults(vaults);
 
         feeToken.mint(account, 1_000e6);
         vm.startPrank(account);
-        feeExecutor.setAccountRegistry(feeRegistry);
-        feeExecutor.setVaultPolicy(
-            address(feeToken), DEFAULT_VOLUME_LIMIT, DEFAULT_VOLUME_LIMIT, 1 days
-        );
         feeToken.approve(address(feeExecutor), type(uint256).max);
         Operation[] memory ops = new Operation[](1);
         ops[0] = Operation({
@@ -549,83 +510,15 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         vm.stopPrank();
     }
 
-    function test_accountMustExplicitlyEnableVenue() public {
-        vm.prank(account);
-        executor.setVaultPolicy(aaveVault, 0, 0, 0);
-        underlying.mint(account, 1e6);
-        _approveMax(address(underlying));
-        Operation[] memory ops = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6));
-
-        vm.expectRevert(IGrowYieldExecutor.VenueNotAllowed.selector);
-        _execute(ops);
-    }
-
-    function test_epochBudgetBoundsCumulativeDepositVolume() public {
-        vm.prank(account);
-        executor.setVaultPolicy(aaveVault, 100e6, 0, 1 days);
-        underlying.mint(account, 150e6);
-        _approveMax(address(underlying));
-
-        _execute(_ops1(_op(aaveVault, OperationKind.DEPOSIT, 60e6)));
-        Operation[] memory exceeds = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 41e6));
-        vm.expectRevert(IGrowYieldExecutor.BudgetExceeded.selector);
-        _execute(exceeds);
-
-        vm.warp(block.timestamp + 1 days);
-        _execute(_ops1(_op(aaveVault, OperationKind.DEPOSIT, 41e6)));
-    }
-
-    function test_policyLimitUpdate_preservesConsumption() public {
-        vm.prank(account);
-        executor.setVaultPolicy(aaveVault, 100e6, 0, 1 days);
-        underlying.mint(account, 100e6);
-        _approveMax(address(underlying));
-        _execute(_ops1(_op(aaveVault, OperationKind.DEPOSIT, 60e6)));
-
-        vm.prank(account);
-        executor.setVaultPolicy(aaveVault, 70e6, 0, 1 days);
-        (,, uint256 spent,,,) = executor.vaultPolicy(account, address(aaveAdapter));
-        assertEq(spent, 60e6);
-
-        Operation[] memory exceeds = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 11e6));
-        vm.expectRevert(IGrowYieldExecutor.BudgetExceeded.selector);
-        _execute(exceeds);
-    }
-
-    function test_policyDurationChange_requiresExplicitReset() public {
-        vm.prank(account);
-        executor.setVaultPolicy(aaveVault, 100e6, 0, 1 days);
-        underlying.mint(account, 160e6);
-        _approveMax(address(underlying));
-        _execute(_ops1(_op(aaveVault, OperationKind.DEPOSIT, 60e6)));
-
-        vm.prank(account);
-        vm.expectRevert(IGrowYieldExecutor.EpochDurationChangeRequiresReset.selector);
-        executor.setVaultPolicy(aaveVault, 100e6, 0, 2 days);
-
-        vm.prank(account);
-        executor.resetVaultPolicy(aaveVault, 100e6, 0, 2 days);
-        (,, uint256 spent,, uint48 duration,) = executor.vaultPolicy(account, address(aaveAdapter));
-        assertEq(spent, 0);
-        assertEq(duration, 2 days);
-        _execute(_ops1(_op(aaveVault, OperationKind.DEPOSIT, 100e6)));
-    }
-
-    function test_unboundedAdapterPolicy_isRejected() public {
-        vm.prank(account);
-        vm.expectRevert(IGrowYieldExecutor.UnboundedPolicy.selector);
-        executor.setVaultPolicy(aaveVault, type(uint256).max, 0, 1 days);
-    }
-
     function test_riskGuardianPause_blocksDepositsButNotExits() public {
         _seedAave(100e6);
 
         vm.prank(makeAddr("notGuardian"));
         vm.expectRevert(IGrowYieldExecutor.OnlyRiskGuardian.selector);
-        executor.pauseVaultDeposits(registry, aaveVault);
+        executor.pauseVaultDeposits(aaveVault);
 
         vm.prank(riskGuardian);
-        executor.pauseVaultDeposits(registry, aaveVault);
+        executor.pauseVaultDeposits(aaveVault);
         assertTrue(executor.depositsPaused(aaveVault));
 
         underlying.mint(account, 1e6);
@@ -639,9 +532,9 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         assertEq(aavePool.aToken().balanceOf(account), 0);
     }
 
-    function test_revertedOperationDoesNotConsumeBudget() public {
-        vm.prank(account);
-        executor.setVaultPolicy(morphoVault, 100e6, 0, 1 days);
+    /// @dev A reverted operation must leave no partial state: the source stays with the
+    ///      account and nothing lands on the adapter.
+    function test_revertedOperationLeavesNoPartialState() public {
         morphoWrapper.setHaircutBps(200);
         underlying.mint(account, 100e6);
         _approveMax(address(underlying));
@@ -650,8 +543,9 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         vm.expectRevert(IGrowYieldExecutor.InsufficientOutput.selector);
         _execute(ops);
 
-        (,, uint256 depositSpent,,,) = executor.vaultPolicy(account, address(morphoAdapter));
-        assertEq(depositSpent, 0);
+        assertEq(underlying.balanceOf(account), 100e6);
+        assertEq(morphoWrapper.balanceOf(account), 0);
+        _assertNoResiduals();
     }
 
     // --- drift protection ---
@@ -692,7 +586,13 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         _execute(ops);
     }
 
-    function test_aaveDrift_reserveRepointed_blocksDepositAllowsExit() public {
+    /// @dev Aave re-points a reserve's aToken only by dropping and re-initializing the reserve
+    ///      (`updateAToken` upgrades the proxy behind a fixed address), which strands the old
+    ///      aToken at the protocol level: the pool no longer manages it, so no caller can
+    ///      withdraw against it. Grow blocks the deposit on drift and leaves the stranded
+    ///      position untouched; the exit is closed by Aave, not by the executor. Drift is
+    ///      per-venue, so sibling reserves of the same pool and adapter keep working.
+    function test_aaveDrift_reserveRepointed_blocksDepositAndStrandsThatVenueOnly() public {
         _seedAave(100e6);
 
         aaveDataProvider.setAToken(makeAddr("newAToken"));
@@ -700,22 +600,35 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         underlying.mint(account, 100e6);
         _approveMax(address(underlying));
         Operation[] memory depositOps = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 100e6));
-        vm.expectRevert(AaveV3Adapter.ReserveDrift.selector);
+        vm.expectRevert(IGrowYieldExecutor.VenueDrift.selector);
         _execute(depositOps);
 
+        // The drifted venue's exit is no longer serviceable, and nothing is swept or lost.
         _approveMax(address(aavePool.aToken()));
-        _execute(_ops1(_op(aaveVault, OperationKind.REDEEM, type(uint256).max)));
-        assertEq(aavePool.aToken().balanceOf(account), 0);
+        Operation[] memory exitOps = _ops1(_op(aaveVault, OperationKind.REDEEM, 100e6));
+        vm.expectRevert();
+        _execute(exitOps);
+        assertEq(aavePool.aToken().balanceOf(account), 100e6, "position untouched");
+        assertEq(underlying.balanceOf(account), 100e6, "deposit funds returned to account");
+
+        // A sibling reserve served by the same pool and adapter still round-trips.
+        otherUnderlying.mint(account, 50e6);
+        _approveMax(address(otherUnderlying));
+        _execute(_ops1(_op(aaveVaultOther, OperationKind.DEPOSIT, 50e6)));
+
+        _approveMax(address(aavePool.aTokens(aaveVaultOther)));
+        _execute(_ops1(_op(aaveVaultOther, OperationKind.REDEEM, type(uint256).max)));
+        assertEq(otherUnderlying.balanceOf(account), 50e6);
     }
 
     // --- access ---
 
     function test_adapters_onlyExecutor() public {
         vm.expectRevert(AaveV3Adapter.OnlyExecutor.selector);
-        aaveAdapter.deposit(1, account);
+        aaveAdapter.deposit(aaveVault, 1, account);
 
         vm.expectRevert(MorphoVaultV2Adapter.OnlyExecutor.selector);
-        morphoAdapter.redeem(1, account);
+        morphoAdapter.redeem(morphoVault, 1, account);
     }
 
     function test_strangerCannotMoveAccountFunds() public {

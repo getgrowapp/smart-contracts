@@ -61,7 +61,6 @@ abstract contract GrowYieldTestBase is Test {
     uint128 internal constant MAX_PRIORITY_FEE = 2 gwei;
     uint128 internal constant MAX_FEE = 2 gwei;
     uint32 internal constant POLICY_ENTITY_ID = 1;
-    uint256 internal constant DEFAULT_VOLUME_LIMIT = 1e36;
 
     GrowYieldAdapterRegistry internal registry;
     GrowYieldExecutor internal executor;
@@ -99,31 +98,34 @@ abstract contract GrowYieldTestBase is Test {
         sponsorPaymaster = address(new MockValidationModule());
         _deployStack();
 
+        // One call is the account's whole opt-in: entity, policy owners, and the executor whose
+        // registry defines every venue it may use.
         address[] memory initialOwners = new address[](1);
         initialOwners[0] = automation;
         vm.prank(account);
-        policyModule.onInstall(abi.encode(POLICY_ENTITY_ID, initialOwners));
-        _enableAllAdapters(account);
+        policyModule.onInstall(abi.encode(POLICY_ENTITY_ID, initialOwners, address(executor)));
     }
 
-    /// @dev Deploys executor, adapters, registry with its initial vault set, then the module.
+    /// @dev Deploys venue infrastructure, then the executor (which deploys its own registry),
+    ///      then the adapters that authorize it, then admits the initial vault set.
     function _deployStack() internal {
         automationPk = uint256(keccak256("automation"));
         automation = vm.addr(automationPk);
         riskGuardian = makeAddr("riskGuardian");
 
-        executor = new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian);
         underlying = new MockUnderlying();
         otherUnderlying = new MockUnderlying();
 
-        _deployAaveStack();
-        _deployMorphoStack();
+        _deployAaveVenues();
+        _deployMorphoVenues();
 
-        registry = _deployRegistry(address(this));
+        executor = _deployExecutor(address(this));
+        registry = GrowYieldAdapterRegistry(address(executor.registry()));
+
+        _deployAdapters();
         registry.addVaults(_defaultVaults());
 
         policyModule = new GrowYieldPolicyModule(
-            address(executor),
             sponsorPaymaster,
             MAX_VERIFICATION_GAS,
             MAX_CALL_GAS,
@@ -153,36 +155,30 @@ abstract contract GrowYieldTestBase is Test {
         );
     }
 
-    /// @dev Registry owned by `owner_`, pinning the mock Aave and Morpho registrars only.
-    function _deployRegistry(address owner_) internal returns (GrowYieldAdapterRegistry) {
-        return new GrowYieldAdapterRegistry(
-            address(executor),
-            owner_,
-            IGrowYieldAdapterRegistry.Registrars({
-                aavePool: address(aavePool),
-                aaveDataProvider: address(aaveDataProvider),
-                morphoVaultFactory: address(morphoFactory),
-                morphoAdapterFactory: address(morphoAdapterFactory),
-                morphoEligibility: address(morphoEligibility),
-                eulerEVaultFactory: address(0),
-                eulerEarnFactory: address(0),
-                capyFiComptroller: address(0)
-            })
-        );
+    /// @dev A fresh executor over the same mock venues, with its own registry owned by `owner_`.
+    ///      Each executor is permanently bound to the registry it deploys, so this is how a test
+    ///      obtains a second, independent venue set.
+    function _deployExecutor(address owner_) internal returns (GrowYieldExecutor) {
+        return new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian, owner_, _mockRegistrars());
     }
 
-    function _enableAllAdapters(address account_) internal {
-        vm.startPrank(account_);
-        executor.setAccountRegistry(registry);
-        executor.setVaultPolicy(aaveVault, DEFAULT_VOLUME_LIMIT, DEFAULT_VOLUME_LIMIT, 1 days);
-        executor.setVaultPolicy(aaveVaultOther, DEFAULT_VOLUME_LIMIT, DEFAULT_VOLUME_LIMIT, 1 days);
-        executor.setVaultPolicy(morphoVault, DEFAULT_VOLUME_LIMIT, DEFAULT_VOLUME_LIMIT, 1 days);
-        vm.stopPrank();
+    /// @dev The mock Aave and Morpho registrars; every other protocol is unsupported here.
+    function _mockRegistrars() internal view returns (IGrowYieldAdapterRegistry.Registrars memory) {
+        return IGrowYieldAdapterRegistry.Registrars({
+            aavePool: address(aavePool),
+            aaveDataProvider: address(aaveDataProvider),
+            morphoVaultFactory: address(morphoFactory),
+            morphoAdapterFactory: address(morphoAdapterFactory),
+            morphoEligibility: address(morphoEligibility),
+            eulerEVaultFactory: address(0),
+            eulerEarnFactory: address(0),
+            capyFiComptroller: address(0)
+        });
     }
 
-    /// @dev One pool, one data provider, two reserves, and one adapter serving both — matching
-    ///      real Aave topology, where a single pool fronts every reserve.
-    function _deployAaveStack() internal {
+    /// @dev One pool, one data provider, two reserves — matching real Aave topology, where a
+    ///      single pool fronts every reserve.
+    function _deployAaveVenues() internal {
         aavePool = new MockAavePool(underlying);
         aaveDataProvider =
             new MockMutableAaveDataProvider(address(underlying), address(aavePool.aToken()));
@@ -190,13 +186,20 @@ abstract contract GrowYieldTestBase is Test {
         MockAToken otherAToken = aavePool.addReserve(otherUnderlying);
         aaveDataProvider.setReserve(address(otherUnderlying), address(otherAToken));
 
+        aaveVault = address(underlying);
+        aaveVaultOther = address(otherUnderlying);
+    }
+
+    /// @dev One adapter per protocol, each serving every venue of that protocol.
+    function _deployAdapters() internal {
         aaveAdapter = new AaveV3Adapter(
             IAaveV3Pool(address(aavePool)),
             IAaveProtocolDataProvider(address(aaveDataProvider)),
             address(executor)
         );
-        aaveVault = address(underlying);
-        aaveVaultOther = address(otherUnderlying);
+        morphoAdapter = new MorphoVaultV2Adapter(
+            IMorphoVaultEligibility(address(morphoEligibility)), address(executor)
+        );
     }
 
     /// @dev Admits one more Aave venue on the default registry, reusing the same adapter.
@@ -217,7 +220,7 @@ abstract contract GrowYieldTestBase is Test {
         vault = address(newAsset);
     }
 
-    function _deployMorphoStack() internal {
+    function _deployMorphoVenues() internal {
         morphoFactory = new MockVaultV2Factory();
         morphoEligibility = new MockEligibility();
         morphoAdapterFactory = new MockMorphoV1AdapterFactory();
@@ -233,9 +236,6 @@ abstract contract GrowYieldTestBase is Test {
         morphoWrapper.setAbdicated(IVaultV2.addAdapter.selector, true);
         morphoWrapper.setAbdicated(IVaultV2.removeAdapter.selector, true);
 
-        morphoAdapter = new MorphoVaultV2Adapter(
-            IMorphoVaultEligibility(address(morphoEligibility)), address(executor)
-        );
         morphoVault = address(morphoWrapper);
     }
 

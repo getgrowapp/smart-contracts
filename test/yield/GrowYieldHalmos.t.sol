@@ -24,6 +24,15 @@ contract GrowYieldHalmosTest is GrowYieldTestBase {
         return _ops1(_op(aaveVault, OperationKind.DEPOSIT, type(uint256).max));
     }
 
+    /// @dev The policy reads `callData` as calldata; this external hop provides it.
+    function policyAllows(address account_, address executor_, bytes calldata callData)
+        external
+        pure
+        returns (bool)
+    {
+        return GrowYieldPolicyLib.isAllowed(account_, executor_, callData);
+    }
+
     /// @custom:halmos --solver-timeout-assertion 0
     function check_shortOrGarbageSignature_returnsInvalid(bytes memory junk) public {
         if (junk.length == 71) return;
@@ -63,7 +72,7 @@ contract GrowYieldHalmosTest is GrowYieldTestBase {
         calls[2] = Call(address(underlying), 0, _approve(address(executor), 0));
 
         assert(
-            !GrowYieldPolicyLib.isAllowed(
+            !this.policyAllows(
                 account, address(executor), abi.encodeCall(IModularAccount.executeBatch, (calls))
             )
         );
@@ -79,7 +88,7 @@ contract GrowYieldHalmosTest is GrowYieldTestBase {
         calls[2] = Call(token, 0, _approve(address(executor), 0));
 
         assert(
-            !GrowYieldPolicyLib.isAllowed(
+            !this.policyAllows(
                 account, address(executor), abi.encodeCall(IModularAccount.executeBatch, (calls))
             )
         );

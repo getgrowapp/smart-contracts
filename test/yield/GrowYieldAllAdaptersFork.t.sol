@@ -76,10 +76,6 @@ contract GrowYieldAllAdaptersForkTest is Test {
     // Keep the cycle below the live Euler Earn strategy's remaining supply capacity.
     uint256 internal constant REBALANCE_AMOUNT = 1e6;
     uint256 internal constant IDLE_AMOUNT = 17e6;
-    // Position-token decimals differ (for example Morpho V2 uses 18 and caUSDC uses 8),
-    // so the test policy must bound raw units above every fixture's full-balance amount.
-    uint256 internal constant VOLUME_LIMIT = 1e36;
-
     GrowYieldExecutor internal executor;
     AaveV3Adapter internal aave;
     MorphoVaultV2Adapter internal morpho;
@@ -98,20 +94,26 @@ contract GrowYieldAllAdaptersForkTest is Test {
         vm.createSelectFork(rpc);
 
         account = makeAddr("allAdaptersAccount");
-        executor = new GrowYieldExecutor(50, address(this));
 
         IPoolAddressesProviderAllAdaptersFork aaveProvider =
             IPoolAddressesProviderAllAdaptersFork(AAVE_ADDRESSES_PROVIDER);
+
+        IVaultV2 wrapper0 = IVaultV2(MORPHO_USDC_WRAPPER);
+        address child0 = IMorphoVaultV1Adapter(wrapper0.liquidityAdapter()).morphoVaultV1();
+        ForkMorphoEligibility eligibility = new ForkMorphoEligibility(child0);
+
+        // The executor deploys its registry; both are immutable and name each other.
+        executor = new GrowYieldExecutor(
+            50, address(this), address(this), _registrars(aaveProvider, address(eligibility))
+        );
+        registry = GrowYieldAdapterRegistry(address(executor.registry()));
+
         aave = new AaveV3Adapter(
             IAaveV3Pool(aaveProvider.getPool()),
             IAaveProtocolDataProvider(aaveProvider.getPoolDataProvider()),
             address(executor)
         );
 
-        IVaultV2 wrapper = IVaultV2(MORPHO_USDC_WRAPPER);
-        address liquidityAdapter = wrapper.liquidityAdapter();
-        address child = IMorphoVaultV1Adapter(liquidityAdapter).morphoVaultV1();
-        ForkMorphoEligibility eligibility = new ForkMorphoEligibility(child);
         morpho = new MorphoVaultV2Adapter(eligibility, address(executor));
         evault =
             new EulerEVaultAdapter(IEulerEVaultFactory(EULER_EVAULT_FACTORY), address(executor));
@@ -136,15 +138,11 @@ contract GrowYieldAllAdaptersForkTest is Test {
                 canRedeem: true
             });
         }
-        registry = new GrowYieldAdapterRegistry(
-            address(executor), address(this), _registrars(aaveProvider, address(eligibility))
-        );
         registry.addVaults(configs);
 
+        // Admission is the whole enablement: the account only approves its tokens.
         vm.startPrank(account);
-        executor.setAccountRegistry(registry);
         for (uint256 i; i < 5; ++i) {
-            executor.setVaultPolicy(vaults[i], VOLUME_LIMIT, VOLUME_LIMIT, uint48(1 days));
             IERC20(registry.venue(vaults[i]).positionToken)
                 .approve(address(executor), type(uint256).max);
         }
@@ -155,7 +153,7 @@ contract GrowYieldAllAdaptersForkTest is Test {
     /// @dev Exercises every protocol's registrar dispatch against live Base deployments.
     function _registrars(IPoolAddressesProviderAllAdaptersFork aaveProvider, address eligibility)
         internal
-        pure
+        view
         returns (IGrowYieldAdapterRegistry.Registrars memory)
     {
         return IGrowYieldAdapterRegistry.Registrars({

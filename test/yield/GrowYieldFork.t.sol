@@ -45,15 +45,10 @@ contract GrowYieldForkTest is Test {
 
         IPoolAddressesProvider provider = IPoolAddressesProvider(AAVE_ADDRESSES_PROVIDER);
 
-        executor = new GrowYieldExecutor(50, address(this));
-        adapter = new AaveV3Adapter(
-            IAaveV3Pool(provider.getPool()),
-            IAaveProtocolDataProvider(provider.getPoolDataProvider()),
-            USDC,
-            address(executor)
-        );
-        registry = new GrowYieldAdapterRegistry(
-            address(executor),
+        // The executor deploys its registry; both are immutable and name each other.
+        executor = new GrowYieldExecutor(
+            50,
+            address(this),
             address(this),
             IGrowYieldAdapterRegistry.Registrars({
                 aavePool: provider.getPool(),
@@ -66,30 +61,33 @@ contract GrowYieldForkTest is Test {
                 capyFiComptroller: address(0)
             })
         );
+        registry = GrowYieldAdapterRegistry(address(executor.registry()));
+
+        adapter = new AaveV3Adapter(
+            IAaveV3Pool(provider.getPool()),
+            IAaveProtocolDataProvider(provider.getPoolDataProvider()),
+            address(executor)
+        );
         IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
             new IGrowYieldAdapterRegistry.VaultConfig[](1);
-        vaults[0] =
-            IGrowYieldAdapterRegistry.VaultConfig(address(adapter), Protocol.AAVE, true, true);
+        vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
+            address(adapter), USDC, Protocol.AAVE, true, true
+        );
         registry.addVaults(vaults);
-
-        vm.startPrank(account);
-        executor.setAccountRegistry(registry);
-        executor.setVaultPolicy(address(adapter), 1_000_000_000e6, 1_000_000_000e6, 1 days);
-        vm.stopPrank();
     }
 
     function test_fork_depositAndRedeem_realAaveUsdc() public {
         uint256 amount = 10_000e6;
         deal(USDC, account, amount);
 
-        IERC20 aToken = IERC20(adapter.positionToken());
+        IERC20 aToken = IERC20(adapter.positionToken(USDC));
 
         vm.startPrank(account);
         IERC20(USDC).approve(address(executor), type(uint256).max);
 
         Operation[] memory ops = new Operation[](1);
         ops[0] = Operation({
-            adapter: adapter,
+            vault: USDC,
             kind: OperationKind.DEPOSIT,
             sourceToken: USDC,
             amount: 0,
@@ -106,7 +104,7 @@ contract GrowYieldForkTest is Test {
         aToken.approve(address(executor), type(uint256).max);
 
         ops[0] = Operation({
-            adapter: adapter,
+            vault: USDC,
             kind: OperationKind.REDEEM,
             sourceToken: address(aToken),
             amount: 0,
@@ -128,14 +126,14 @@ contract GrowYieldForkTest is Test {
     ///      spuriously revert.
     function test_fork_aTokenRounding_oddWeiRedeemExactness() public {
         deal(USDC, account, 10_000e6);
-        IERC20 aToken = IERC20(adapter.positionToken());
+        IERC20 aToken = IERC20(adapter.positionToken(USDC));
 
         vm.startPrank(account);
         IERC20(USDC).approve(address(executor), type(uint256).max);
 
         Operation[] memory ops = new Operation[](1);
         ops[0] = Operation({
-            adapter: adapter,
+            vault: USDC,
             kind: OperationKind.DEPOSIT,
             sourceToken: USDC,
             amount: 0,
@@ -152,7 +150,7 @@ contract GrowYieldForkTest is Test {
             vm.warp(block.timestamp + 13 hours + i * 7 hours);
 
             ops[0] = Operation({
-                adapter: adapter,
+                vault: USDC,
                 kind: OperationKind.REDEEM,
                 sourceToken: address(aToken),
                 amount: redeems[i],
@@ -167,7 +165,7 @@ contract GrowYieldForkTest is Test {
     }
 
     function test_fork_registryRemainsFixed() public view {
-        assertTrue(registry.canDeposit(address(adapter)));
+        assertTrue(registry.canDeposit(USDC));
         assertEq(registry.adapterCodeHash(address(adapter)), address(adapter).codehash);
     }
 }

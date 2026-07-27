@@ -17,7 +17,7 @@ import {ICapyFiComptroller} from "../../src/interfaces/ICapyFiComptroller.sol";
 import {IEulerEarnFactory} from "../../src/interfaces/IEulerEarnFactory.sol";
 import {IEulerEVaultFactory} from "../../src/interfaces/IEulerEVaultFactory.sol";
 import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
-import {OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
+import {Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
 import {MockAToken, MockUnderlying} from "../invariant/MockYieldVenues.sol";
 
 /// @notice Adapter construction and venue-agnostic runtime behaviour.
@@ -97,10 +97,8 @@ contract GrowYieldAdaptersTest is GrowYieldTestBase {
     ///      every reserve of its pool, and the registry keeps the venues independent.
     function test_aave_oneAdapterServesEveryReserve() public {
         (address thirdVault, MockAToken thirdAToken) = _addAaveReserve();
+        // Admission is the whole enablement: no per-account, per-venue configuration follows.
         _admitAaveVault(thirdVault);
-
-        vm.prank(account);
-        executor.setVaultPolicy(thirdVault, DEFAULT_VOLUME_LIMIT, DEFAULT_VOLUME_LIMIT, 1 days);
 
         address[3] memory vaults = [aaveVault, aaveVaultOther, thirdVault];
         address[3] memory aTokens = [
@@ -116,8 +114,10 @@ contract GrowYieldAdaptersTest is GrowYieldTestBase {
             vm.prank(account);
             IERC20(vaults[i]).approve(address(executor), type(uint256).max);
 
+            // Built before the prank: `_op` reads the registry, which would consume it.
+            Operation[] memory ops = _ops1(_op(vaults[i], OperationKind.DEPOSIT, 40e6));
             vm.prank(account);
-            executor.execute(_ops1(_op(vaults[i], OperationKind.DEPOSIT, 40e6)));
+            executor.execute(ops);
 
             assertEq(IERC20(aTokens[i]).balanceOf(account), 40e6, "position credited");
             assertEq(IERC20(vaults[i]).balanceOf(address(aaveAdapter)), 0, "no residual");

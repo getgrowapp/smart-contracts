@@ -44,41 +44,26 @@ contract GrowYieldEulerCapyFiForkTest is Test {
         }
         vm.createSelectFork(rpc);
         account = makeAddr("account");
-        executor = new GrowYieldExecutor(50, address(this));
+        _freshExecutor();
     }
 
+    /// @dev Admission is the whole enablement; there is no per-account configuration left.
     function _enable(address adapter, address vault, Protocol protocol) internal {
-        registry = new GrowYieldAdapterRegistry(
-            address(executor),
-            address(this),
-            IGrowYieldAdapterRegistry.Registrars({
-                aavePool: address(0),
-                aaveDataProvider: address(0),
-                morphoVaultFactory: address(0),
-                morphoAdapterFactory: address(0),
-                morphoEligibility: address(0),
-                eulerEVaultFactory: EVAULT_FACTORY,
-                eulerEarnFactory: EARN_FACTORY,
-                capyFiComptroller: CAPY_COMPTROLLER
-            })
-        );
         IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
             new IGrowYieldAdapterRegistry.VaultConfig[](1);
         vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(adapter, vault, protocol, true, true);
         registry.addVaults(vaults);
-
-        vm.startPrank(account);
-        executor.setAccountRegistry(registry);
-        executor.setVaultPolicy(vault, 1_000_000_000e6, 1_000_000_000e6, 1 days);
-        vm.stopPrank();
     }
 
     function _adapterOf(address vault) internal view returns (address) {
         return registry.vaultAdapter(vault);
     }
 
+    /// @dev A new executor also means a new, empty registry: the two are deployed together and
+    ///      permanently bound.
     function _freshExecutor() internal {
-        executor = new GrowYieldExecutor(50, address(this));
+        executor = new GrowYieldExecutor(50, address(this), address(this), _forkRegistrars());
+        registry = GrowYieldAdapterRegistry(address(executor.registry()));
     }
 
     function _depositRedeem(address vault, address position) internal {
@@ -224,7 +209,7 @@ contract GrowYieldEulerCapyFiForkTest is Test {
         _freshExecutor();
         EulerEVaultAdapter adapter =
             new EulerEVaultAdapter(IEulerEVaultFactory(EVAULT_FACTORY), address(executor));
-        GrowYieldAdapterRegistry r = _forkRegistry();
+        GrowYieldAdapterRegistry r = registry;
 
         IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
             new IGrowYieldAdapterRegistry.VaultConfig[](1);
@@ -243,7 +228,7 @@ contract GrowYieldEulerCapyFiForkTest is Test {
         _freshExecutor();
         CapyFiAdapter adapter =
             new CapyFiAdapter(address(executor), ICapyFiComptroller(EVAULT_FACTORY));
-        GrowYieldAdapterRegistry r = _forkRegistry();
+        GrowYieldAdapterRegistry r = registry;
 
         IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
             new IGrowYieldAdapterRegistry.VaultConfig[](1);
@@ -255,20 +240,17 @@ contract GrowYieldEulerCapyFiForkTest is Test {
         r.addVaults(vaults);
     }
 
-    function _forkRegistry() internal returns (GrowYieldAdapterRegistry) {
-        return new GrowYieldAdapterRegistry(
-            address(executor),
-            address(this),
-            IGrowYieldAdapterRegistry.Registrars({
-                aavePool: address(0),
-                aaveDataProvider: address(0),
-                morphoVaultFactory: address(0),
-                morphoAdapterFactory: address(0),
-                morphoEligibility: address(0),
-                eulerEVaultFactory: EVAULT_FACTORY,
-                eulerEarnFactory: EARN_FACTORY,
-                capyFiComptroller: CAPY_COMPTROLLER
-            })
-        );
+    /// @dev The live Euler and CapyFi registrars this suite pins.
+    function _forkRegistrars() internal pure returns (IGrowYieldAdapterRegistry.Registrars memory) {
+        return IGrowYieldAdapterRegistry.Registrars({
+            aavePool: address(0),
+            aaveDataProvider: address(0),
+            morphoVaultFactory: address(0),
+            morphoAdapterFactory: address(0),
+            morphoEligibility: address(0),
+            eulerEVaultFactory: EVAULT_FACTORY,
+            eulerEarnFactory: EARN_FACTORY,
+            capyFiComptroller: CAPY_COMPTROLLER
+        });
     }
 }

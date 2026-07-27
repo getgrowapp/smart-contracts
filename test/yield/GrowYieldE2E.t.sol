@@ -23,6 +23,7 @@ import {
 
 import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
 import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
+import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
 import {
     IGrowYieldAdapterRegistry,
     Protocol
@@ -90,7 +91,7 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
     }
 
     function test_e2e_installEnableDepositWithdrawReallocate() public {
-        _installPolicyAndEnableAdapters();
+        _installPolicy();
 
         underlying.mint(account, 1_000e6);
         _runPolicyUserOp(
@@ -140,7 +141,7 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
     }
 
     function test_e2e_addAndRemovePolicyOwner() public {
-        _installPolicyAndEnableAdapters();
+        _installPolicy();
         (address secondPolicyOwner, uint256 secondKey) = makeAddrAndKey("secondPolicyOwner");
 
         _runOwnerUserOp(
@@ -177,7 +178,7 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
     }
 
     function test_e2e_tamperedCallDataFailsSignatureValidation() public {
-        _installPolicyAndEnableAdapters();
+        _installPolicy();
         PackedUserOperation memory userOp = _buildPolicyUserOp(
             _batch1(address(underlying), _ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6)))
         );
@@ -192,7 +193,7 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
     }
 
     function test_e2e_policyOwnerCannotBypassBatchPolicy() public {
-        _installPolicyAndEnableAdapters();
+        _installPolicy();
         Call[] memory calls = new Call[](2);
         calls[0] = Call(address(underlying), 0, _approve(address(executor), type(uint256).max));
         calls[1] = Call(
@@ -206,27 +207,20 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
         _handleOps(userOp);
     }
 
-    /// @dev Requirement: only the account's own owner path may change the registry. The policy
-    ///      library accepts no batch shape containing `setAccountRegistry`, so a policy-owner
-    ///      signature fails validation whether the call is sent bare or wrapped in a batch.
-    function test_e2e_policyOwnerCannotRetargetAccountRegistry() public {
-        _installPolicyAndEnableAdapters();
-        GrowYieldAdapterRegistry rogue = _deployRegistry(address(this));
-        IGrowYieldAdapterRegistry.VaultConfig[] memory rogueVaults =
-            new IGrowYieldAdapterRegistry.VaultConfig[](1);
-        rogueVaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
-            address(aaveAdapter), aaveVaultOther, Protocol.AAVE, true, true
-        );
-        rogue.addVaults(rogueVaults);
+    /// @dev Requirement: only the account's own owner path may change which executor — and so
+    ///      which registry, and so which venue set — the account uses. The policy library
+    ///      accepts no batch shape containing `setExecutor`, so a policy-owner signature fails
+    ///      validation whether the call is sent bare or wrapped in a batch.
+    function test_e2e_policyOwnerCannotRetargetAccountExecutor() public {
+        _installPolicy();
+        GrowYieldExecutor rogue = _deployExecutor(address(this));
 
-        bytes memory retarget = abi.encodeCall(
-            executor.setAccountRegistry, (IGrowYieldAdapterRegistry(address(rogue)))
-        );
+        bytes memory retarget = abi.encodeCall(policyModule.setExecutor, (address(rogue)));
 
         // A bare `execute` never reaches the module: the Grow entity is installed for
         // `executeBatch` only, so the account has no validation function for that selector.
         PackedUserOperation memory bare = _buildPolicyUserOp(
-            abi.encodeCall(IModularAccount.execute, (address(executor), 0, retarget))
+            abi.encodeCall(IModularAccount.execute, (address(policyModule), 0, retarget))
         );
         bare.signature = _policyModuleSignature(bare, automationPk);
         vm.expectPartialRevert(IEntryPoint.FailedOpWithRevert.selector);
@@ -234,7 +228,7 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
 
         Call[] memory calls = new Call[](3);
         calls[0] = Call(address(underlying), 0, _approve(address(executor), type(uint256).max));
-        calls[1] = Call(address(executor), 0, retarget);
+        calls[1] = Call(address(policyModule), 0, retarget);
         calls[2] = Call(address(underlying), 0, _approve(address(executor), 0));
         PackedUserOperation memory batched =
             _buildPolicyUserOp(abi.encodeCall(IModularAccount.executeBatch, (calls)));
@@ -242,15 +236,15 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
         _expectFailedOp("AA24 signature error");
         _handleOps(batched);
 
-        assertEq(address(executor.accountRegistry(account)), address(registry), "unchanged");
+        assertEq(policyModule.accountExecutor(account), address(executor), "unchanged");
 
         // The owner path performs the same change successfully.
-        _setAccountRegistryAsOwner(address(rogue));
-        assertEq(address(executor.accountRegistry(account)), address(rogue), "owner may switch");
+        _setExecutorAsOwner(address(rogue));
+        assertEq(policyModule.accountExecutor(account), address(rogue), "owner may switch");
     }
 
     function test_e2e_policyOperationsAreSponsorPaid() public {
-        _installPolicyAndEnableAdapters();
+        _installPolicy();
         underlying.mint(account, 1e6);
         uint256 accountNativeBefore = account.balance;
         uint256 sponsorDepositBefore = paymaster.getDeposit();
@@ -265,7 +259,7 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
     }
 
     function test_e2e_inflatedPreVerificationGasIsRejected() public {
-        _installPolicyAndEnableAdapters();
+        _installPolicy();
         PackedUserOperation memory userOp = _buildPolicyUserOp(
             _batch1(address(underlying), _ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6)))
         );
@@ -277,7 +271,7 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
     }
 
     function test_e2e_replayFailsNonce() public {
-        _installPolicyAndEnableAdapters();
+        _installPolicy();
         underlying.mint(account, 2e6);
         PackedUserOperation memory userOp = _buildPolicyUserOp(
             _batch1(address(underlying), _ops1(_op(aaveVault, OperationKind.DEPOSIT, 1e6)))
@@ -289,7 +283,9 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
         _handleOps(userOp);
     }
 
-    function _installPolicyAndEnableAdapters() internal {
+    /// @dev The account's entire opt-in: one owner-authorized call installing the Grow entity,
+    ///      its policy owners, and the executor whose registry defines every usable venue.
+    function _installPolicy() internal {
         bytes4[] memory selectors = new bytes4[](1);
         selectors[0] = IModularAccount.executeBatch.selector;
         address[] memory initialOwners = new address[](1);
@@ -303,46 +299,18 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
                         address(policyModule), POLICY_ENTITY_ID, false, false, true
                     ),
                     selectors,
-                    abi.encode(POLICY_ENTITY_ID, initialOwners),
+                    abi.encode(POLICY_ENTITY_ID, initialOwners, address(executor)),
                     new bytes[](0)
                 )
             )
         );
-
-        // The account owner selects the registry before any limit can be set against it.
-        _setAccountRegistryAsOwner(address(registry));
-        _setVaultPolicyAsOwner(aaveVault);
-        _setVaultPolicyAsOwner(aaveVaultOther);
-        _setVaultPolicyAsOwner(morphoVault);
     }
 
-    function _setAccountRegistryAsOwner(address registry_) internal {
+    function _setExecutorAsOwner(address executor_) internal {
         _runOwnerUserOp(
             abi.encodeCall(
                 IModularAccount.execute,
-                (
-                    address(executor),
-                    0,
-                    abi.encodeCall(
-                        executor.setAccountRegistry, (IGrowYieldAdapterRegistry(registry_))
-                    )
-                )
-            )
-        );
-    }
-
-    function _setVaultPolicyAsOwner(address vault) internal {
-        _runOwnerUserOp(
-            abi.encodeCall(
-                IModularAccount.execute,
-                (
-                    address(executor),
-                    0,
-                    abi.encodeCall(
-                        executor.setVaultPolicy,
-                        (vault, DEFAULT_VOLUME_LIMIT, DEFAULT_VOLUME_LIMIT, uint48(1 days))
-                    )
-                )
+                (address(policyModule), 0, abi.encodeCall(policyModule.setExecutor, (executor_)))
             )
         );
     }

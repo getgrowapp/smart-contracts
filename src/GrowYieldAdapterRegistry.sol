@@ -52,6 +52,11 @@ import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 ///      Adapters must be direct, non-upgradeable deployments because their runtime code hash is
 ///      pinned on first admission. Once the intended venue set is final the owner may renounce
 ///      ownership, making the registry fully immutable.
+///
+///      This registry is deployed by its executor's constructor and the two are permanently
+///      bound: `executor` here and `registry` there are both immutable, and neither is settable.
+///      Admitting a venue is therefore the single governance decision that makes it usable — the
+///      executor holds no per-account opt-in of its own.
 /// @custom:security-contact security@getgrowapp.co
 contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
     /// @inheritdoc IGrowYieldAdapterRegistry
@@ -93,12 +98,14 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
     /// @inheritdoc IGrowYieldAdapterRegistry
     mapping(address adapter => bytes32) public adapterCodeHash;
 
-    /// @param executor_ Executor every admitted adapter must authorize.
+    /// @param executor_ Executor every admitted adapter must authorize. Deployed only by that
+    ///        executor's own constructor, so it is still mid-construction here and has no
+    ///        runtime code yet; only its address can be checked.
     /// @param owner_ Address authorized to admit venues; should be a Safe or TimelockController.
     /// @param registrars_ Canonical registrars pinned for this registry's lifetime. A zero
     ///        address marks that protocol unsupported here.
     constructor(address executor_, address owner_, Registrars memory registrars_) Ownable(owner_) {
-        if (executor_.code.length == 0) revert Invalid();
+        if (executor_ == address(0)) revert Invalid();
 
         // A protocol is either fully pinned or absent. A half-configured protocol would
         // otherwise skip part of its authenticity proof at admission time.

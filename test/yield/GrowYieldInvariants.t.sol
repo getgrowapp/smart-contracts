@@ -183,10 +183,12 @@ contract GrowYieldInvariants is GrowYieldTestBase {
         assertGt(value, 0);
     }
 
-    /// @dev No operation path admits a vault, edits an admitted entry, or retargets the
-    ///      account's registry: those require the registry owner and the account respectively.
-    function invariant_registryEntriesAndAccountSelectionAreStable() public view {
-        assertEq(address(executor.accountRegistry(account)), address(registry));
+    /// @dev No operation path admits a vault, edits an admitted entry, or unbinds the executor
+    ///      from its registry: admission requires the registry owner, and the binding is
+    ///      immutable.
+    function invariant_registryEntriesAndBindingAreStable() public view {
+        assertEq(address(executor.registry()), address(registry));
+        assertEq(registry.executor(), address(executor));
         assertEq(registry.vaultCount(), 3);
 
         address[3] memory expected = [aaveVault, aaveVaultOther, morphoVault];

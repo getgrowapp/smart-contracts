@@ -40,7 +40,6 @@ import {
 ///         for Euler EVK, Euler Earn, and CapyFi adapters.
 contract GrowYieldEulerCapyFiAdaptersTest is Test {
     uint16 internal constant MAX_LOSS_BPS = 50;
-    uint256 internal constant DEFAULT_VOLUME_LIMIT = 1e36;
 
     GrowYieldExecutor internal executor;
     GrowYieldAdapterRegistry internal registry;
@@ -68,7 +67,6 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
     function setUp() public {
         account = makeAddr("smartAccount");
         riskGuardian = makeAddr("riskGuardian");
-        executor = new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian);
         underlying = new MockUnderlying();
         otherUnderlying = new MockUnderlying();
 
@@ -79,22 +77,12 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
         evkFactory.setProxy(address(evault), true);
         earnFactory.setVault(address(earnVault), true);
 
-        evaultAdapter =
-            new EulerEVaultAdapter(IEulerEVaultFactory(address(evkFactory)), address(executor));
-        earnAdapter =
-            new EulerEarnAdapter(IEulerEarnFactory(address(earnFactory)), address(executor));
-
         capyMarket = new MockCapyFiMarket(underlying);
-        capyAdapter = new CapyFiAdapter(
-            address(executor), ICapyFiComptroller(address(capyMarket.comptroller()))
-        );
 
-        evaultVault = address(evault);
-        earnVaultAddr = address(earnVault);
-        capyVault = address(capyMarket.caToken());
-
-        registry = new GrowYieldAdapterRegistry(
-            address(executor),
+        // The executor deploys its registry; both are immutable and name each other.
+        executor = new GrowYieldExecutor(
+            MAX_LOSS_BPS,
+            riskGuardian,
             address(this),
             IGrowYieldAdapterRegistry.Registrars({
                 aavePool: address(0),
@@ -107,6 +95,21 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
                 capyFiComptroller: address(capyMarket.comptroller())
             })
         );
+        registry = GrowYieldAdapterRegistry(address(executor.registry()));
+
+        evaultAdapter =
+            new EulerEVaultAdapter(IEulerEVaultFactory(address(evkFactory)), address(executor));
+        earnAdapter =
+            new EulerEarnAdapter(IEulerEarnFactory(address(earnFactory)), address(executor));
+
+        capyAdapter = new CapyFiAdapter(
+            address(executor), ICapyFiComptroller(address(capyMarket.comptroller()))
+        );
+
+        evaultVault = address(evault);
+        earnVaultAddr = address(earnVault);
+        capyVault = address(capyMarket.caToken());
+
         IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
             new IGrowYieldAdapterRegistry.VaultConfig[](3);
         vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
@@ -119,15 +122,6 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
             address(capyAdapter), capyVault, Protocol.CAPYFI, true, true
         );
         registry.addVaults(vaults);
-
-        vm.prank(account);
-        executor.setAccountRegistry(registry);
-
-        vm.startPrank(account);
-        executor.setVaultPolicy(evaultVault, DEFAULT_VOLUME_LIMIT, DEFAULT_VOLUME_LIMIT, 1 days);
-        executor.setVaultPolicy(earnVaultAddr, DEFAULT_VOLUME_LIMIT, DEFAULT_VOLUME_LIMIT, 1 days);
-        executor.setVaultPolicy(capyVault, DEFAULT_VOLUME_LIMIT, DEFAULT_VOLUME_LIMIT, 1 days);
-        vm.stopPrank();
     }
 
     function _approveMax(address token) internal {
@@ -461,9 +455,9 @@ contract GrowYieldEulerCapyFiAdaptersTest is Test {
 
     function test_registry_enumeratesEulerAndCapyVenues() public view {
         assertEq(registry.vaultCount(), 3);
-        assertEq(registry.vaultAt(0), address(evaultAdapter));
-        assertEq(registry.vaultAt(1), address(earnAdapter));
-        assertEq(registry.vaultAt(2), address(capyAdapter));
+        assertEq(registry.vaultAt(0), evaultVault);
+        assertEq(registry.vaultAt(1), earnVaultAddr);
+        assertEq(registry.vaultAt(2), capyVault);
         assertEq(registry.adapterCodeHash(address(evaultAdapter)), address(evaultAdapter).codehash);
         assertEq(registry.adapterCodeHash(address(earnAdapter)), address(earnAdapter).codehash);
         assertEq(registry.adapterCodeHash(address(capyAdapter)), address(capyAdapter).codehash);

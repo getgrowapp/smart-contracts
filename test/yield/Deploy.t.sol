@@ -35,7 +35,6 @@ contract DeployTest is Test {
 
     bytes32 internal constant EXECUTOR_SALT = bytes32(uint256(1));
     bytes32 internal constant POLICY_SALT = bytes32(uint256(2));
-    bytes32 internal constant REGISTRY_SALT = bytes32(uint256(3));
     bytes32 internal constant AAVE_SALT = bytes32(uint256(0x10));
     address internal constant RISK_GUARDIAN = address(0x1234);
 
@@ -66,15 +65,12 @@ contract DeployTest is Test {
 
         // Every component pinned the same executor, which itself is ownerless.
         assertEq(GrowYieldExecutor(executor).riskGuardian(), RISK_GUARDIAN, "risk guardian");
-        assertEq(GrowYieldPolicyModule(policyModule).executor(), executor, "policy executor");
+        // The module pins no executor: each account approves one at install time.
+        assertEq(GrowYieldPolicyModule(policyModule).accountExecutor(address(this)), address(0));
         assertEq(IYieldAdapter(adapters[0]).executor(), executor, "adapter executor");
 
-        // Accounts opt in themselves; deployment selects a registry for nobody.
-        assertEq(
-            address(GrowYieldExecutor(executor).accountRegistry(address(this))),
-            address(0),
-            "no account registry"
-        );
+        // The executor deployed this registry and the two are permanently bound.
+        assertEq(address(GrowYieldExecutor(executor).registry()), registry, "executor registry");
 
         GrowYieldAdapterRegistry r = GrowYieldAdapterRegistry(registry);
         assertEq(r.executor(), executor, "registry executor");
@@ -161,8 +157,24 @@ contract DeployTest is Test {
         returns (GrowYieldDeployer.StackParams memory params)
     {
         params.executorSalt = EXECUTOR_SALT;
+        // The executor deploys its own registry, naming the deployer as initial owner.
         params.executorInit = abi.encodePacked(
-            type(GrowYieldExecutor).creationCode, abi.encode(uint16(50), RISK_GUARDIAN)
+            type(GrowYieldExecutor).creationCode,
+            abi.encode(
+                uint16(50),
+                RISK_GUARDIAN,
+                address(deployer),
+                IGrowYieldAdapterRegistry.Registrars({
+                    aavePool: address(pool),
+                    aaveDataProvider: address(provider),
+                    morphoVaultFactory: address(0),
+                    morphoAdapterFactory: address(0),
+                    morphoEligibility: address(0),
+                    eulerEVaultFactory: address(0),
+                    eulerEarnFactory: address(0),
+                    capyFiComptroller: address(0)
+                })
+            )
         );
         address executorAddr = _predict(params.executorSalt, params.executorInit);
 
@@ -171,7 +183,6 @@ contract DeployTest is Test {
         params.policyInit = abi.encodePacked(
             type(GrowYieldPolicyModule).creationCode,
             abi.encode(
-                executorAddr,
                 address(this),
                 uint128(500_000),
                 uint128(2_000_000),
@@ -190,25 +201,6 @@ contract DeployTest is Test {
         params.adapterInits[0] = abi.encodePacked(
             type(AaveV3Adapter).creationCode,
             abi.encode(address(pool), address(provider), executorAddr)
-        );
-
-        params.registrySalt = REGISTRY_SALT;
-        params.registryInit = abi.encodePacked(
-            type(GrowYieldAdapterRegistry).creationCode,
-            abi.encode(
-                executorAddr,
-                address(deployer),
-                IGrowYieldAdapterRegistry.Registrars({
-                    aavePool: address(pool),
-                    aaveDataProvider: address(provider),
-                    morphoVaultFactory: address(0),
-                    morphoAdapterFactory: address(0),
-                    morphoEligibility: address(0),
-                    eulerEVaultFactory: address(0),
-                    eulerEarnFactory: address(0),
-                    capyFiComptroller: address(0)
-                })
-            )
         );
 
         params.vaults = new IGrowYieldAdapterRegistry.VaultConfig[](1);
@@ -235,6 +227,86 @@ contract DeployTest is Test {
         assertTrue(c.canDeposit, "canDeposit");
         assertFalse(c.canRedeem, "canRedeem");
         assertEq(c.vault, address(0xA5), "vault");
+    }
+
+    /// @dev Every shipped environment config must decode under the current schema. The
+    ///      pre-refactor configs carried per-vault protocol wiring (`pool`, `wrapper`, `salt`,
+    ///      ...), which `abi.decode` rejects against `VaultCfg` only at deploy time — after the
+    ///      deployer contract is already broadcast. Failing here instead keeps that drift out of
+    ///      a live run.
+    function test_shippedConfigsDecodeUnderCurrentSchema() public view {
+        string[2] memory envs = ["staging", "production"];
+        for (uint256 i; i < envs.length; ++i) {
+            string memory config = vm.readFile(string.concat("script/config/", envs[i], ".json"));
+            string[5] memory protocols = ["aave", "morpho", "eulerEVault", "eulerEarn", "capyfi"];
+
+            uint256 venues;
+            for (uint256 j; j < protocols.length; ++j) {
+                string memory key = string.concat(".vaults.", protocols[j]);
+                if (!vm.keyExistsJson(config, key)) continue;
+
+                // A venue set requires the protocol's adapter salt and pinned registrars;
+                // otherwise `_buildAdapters` / `_buildVaults` abort mid-deploy.
+                assertTrue(
+                    vm.keyExistsJson(config, string.concat(".adapters.", protocols[j])),
+                    string.concat(envs[i], ": vaults without adapter salt: ", protocols[j])
+                );
+
+                Deploy.VaultCfg[] memory cfgs =
+                    abi.decode(vm.parseJson(config, key), (Deploy.VaultCfg[]));
+                for (uint256 k; k < cfgs.length; ++k) {
+                    assertNotEq(cfgs[k].vault, address(0), string.concat(envs[i], ": zero vault"));
+                    assertTrue(
+                        cfgs[k].canDeposit || cfgs[k].canRedeem,
+                        string.concat(envs[i], ": venue permits no direction")
+                    );
+                }
+                venues += cfgs.length;
+            }
+            assertGt(venues, 0, string.concat(envs[i], ": no venues configured"));
+        }
+    }
+
+    /// @dev Each configured adapter salt must have its protocol's registrars pinned, or
+    ///      `_buildAdapters` reverts with "registrars missing for adapter".
+    function test_shippedConfigsPinRegistrarsForEveryAdapter() public view {
+        string[2] memory envs = ["staging", "production"];
+        string[5] memory protocols = ["aave", "morpho", "eulerEVault", "eulerEarn", "capyfi"];
+        string[5] memory registrarKeys = [
+            ".registry.registrars.aavePool",
+            ".registry.registrars.morphoEligibility",
+            ".registry.registrars.eulerEVaultFactory",
+            ".registry.registrars.eulerEarnFactory",
+            ".registry.registrars.capyFiComptroller"
+        ];
+
+        for (uint256 i; i < envs.length; ++i) {
+            string memory config = vm.readFile(string.concat("script/config/", envs[i], ".json"));
+            for (uint256 j; j < protocols.length; ++j) {
+                if (!vm.keyExistsJson(config, string.concat(".adapters.", protocols[j]))) continue;
+                assertTrue(
+                    vm.keyExistsJson(config, registrarKeys[j]),
+                    string.concat(envs[i], ": adapter without registrars: ", protocols[j])
+                );
+            }
+            // Aave needs both halves pinned, or the registry constructor reverts.
+            assertEq(
+                vm.keyExistsJson(config, ".registry.registrars.aavePool"),
+                vm.keyExistsJson(config, ".registry.registrars.aaveDataProvider"),
+                string.concat(envs[i], ": half-configured Aave registrars")
+            );
+            bool morpho = vm.keyExistsJson(config, ".registry.registrars.morphoVaultFactory");
+            assertEq(
+                morpho,
+                vm.keyExistsJson(config, ".registry.registrars.morphoAdapterFactory"),
+                string.concat(envs[i], ": half-configured Morpho registrars")
+            );
+            assertEq(
+                morpho,
+                vm.keyExistsJson(config, ".registry.registrars.morphoEligibility"),
+                string.concat(envs[i], ": half-configured Morpho registrars")
+            );
+        }
     }
 
     function test_vaultCfgArrayDecodesInKeyOrder() public pure {

@@ -152,10 +152,10 @@ unrelated idle underlying already held by the account.
 
 For every operation the executor:
 
-1. Resolves the calling account's selected registry once for the whole batch, then confirms
-   registry direction, account policy, code hash, and deposit-pause state.
+1. Resolves the venue from its immutable registry, then confirms the registry permits the
+   direction, the adapter code hash matches, and deposits are not paused.
 2. Re-derives source and output tokens and checks the signed source declaration.
-3. Resolves the explicit amount mode and consumes the directional epoch budget.
+3. Resolves the explicit amount mode.
 4. Reads the adapter preview.
 5. Transfers the exact source amount directly from the account to the adapter.
 6. Invokes the adapter, which credits output directly to the account.
@@ -176,55 +176,70 @@ max(
 The preview-relative check limits unexpected venue slippage. The absolute floor
 protects against a manipulated or compromised preview returning a misleading value.
 
-### Account registry selection
+### Executor–registry binding
 
-The executor holds no global registry and has **no owner**. Each account selects the registry
-its own operations are checked against:
+The executor has **no owner** and no per-account configuration. It deploys its own registry
+in its constructor, and the two name each other immutably:
 
 ```solidity
-mapping(address account => IGrowYieldAdapterRegistry) public accountRegistry;
-
-function setAccountRegistry(IGrowYieldAdapterRegistry registry_) external;
+IGrowYieldAdapterRegistry public immutable registry;   // on the executor
+address public immutable executor;                     // on the registry
 ```
 
-The selection is keyed by `msg.sender`, so only the smart account can change its own. Because
-`GrowYieldPolicyLib` accepts exactly one batch shape and that shape contains nothing but
-`approve` / `executor.execute` / `approve`, **no policy-owner signature can ever produce this
-call**. Changing the registry therefore requires the account's own owner-authorized validation
-path — the same path that installs the module and sets adapter limits. Session keys and the
-Grow backend are excluded by construction, with no extra signature scheme to audit.
+Deploying the registry from the constructor is what makes the binding total. CREATE2 cannot
+resolve a mutual pin — each contract's init code would have to contain the other's address —
+so the alternatives are a settable slot or an initializer window. Creating the registry inline
+has neither: nothing about the pair is configurable after deployment.
 
-A selection must be a deployed registry that authorizes this executor and has already admitted
-at least one vault. The last condition rejects two silent mistakes at selection time rather
-than at the first operation: an adapter address (adapters also report `executor()`), and an
-empty registry no operation could use. Registries are append-only, so a registry that
-satisfies the condition can never stop satisfying it.
+Which venues exist is therefore a single governance decision, made once by the registry owner
+calling `addVaults`. There is no per-account registry selection and no per-account, per-venue
+enablement to keep in sync with it.
 
-Reselection is permitted and is the venue-expansion path: governance deploys a registry that
-supports a new protocol, and each account opts in with one owner-signed call. Reselection
-re-gates execution immediately — an adapter absent from the new registry reverts
-`AdapterNotAllowed`. Per-adapter limits already set by the account survive, because admission
-and limits are independent gates: an operation needs the registry to permit the direction
-**and** the account to have a nonzero limit for it, so a new registry can never silently
-enable a venue the account has not separately authorized.
+The executor is permissionless as a result: `execute` pulls the source token from `msg.sender`
+and credits every output back to `msg.sender`, so a caller can only ever move their own funds,
+and only into or out of an admitted venue. Nothing is gained by calling it as anyone else.
 
-The batch resolves the registry once. A reentrant reselection cannot change the rules being
-applied to an in-flight batch (and `execute` is `nonReentrant` regardless).
+### The account's opt-in
 
-An account that has selected no registry cannot execute or configure anything:
-`RegistryNotSet`.
+An account approves exactly one executor, and it does so on the **policy module**, not on the
+executor:
 
-### Adapter policies
+```solidity
+function setExecutor(address executor) external;               // keyed by msg.sender
+function accountExecutor(address account) external view returns (address);
+```
 
-Each account owns separate deposit and redeem source-volume limits for every registered
-adapter. `setAdapterPolicy` changes limits without clearing already-consumed volume.
-Changing the epoch duration requires `resetAdapterPolicy`, which explicitly resets
-usage and emits `AdapterPolicyUsageReset`.
+`onInstall(abi.encode(entityId, policyOwners, executor))` is the account's whole enrollment —
+one owner-signed transaction. The executor names the registry, the registry names the venues,
+and there is nothing further to configure.
 
-`type(uint256).max` is rejected as `UnboundedPolicy`: it would make the quantitative
-limit meaningless. Limits must be finite and chosen in the source token's native
-units. Zero disables one direction; two zero limits revoke the adapter for that
-account while retaining prior usage unless an explicit reset is requested.
+Because `GrowYieldPolicyLib` accepts exactly one batch shape and that shape contains nothing
+but `approve` / `executor.execute` / `approve`, **no policy-owner signature can ever produce a
+`setExecutor` call**. Replacing the executor requires the account's own owner-authorized
+validation path — the same path that installs the module. Session keys and the Grow backend
+are excluded by construction.
+
+Replacement is immediate and has no overlap: batches targeting the previous executor stop
+validating the moment `setExecutor` returns. Exit positions opened through an executor before
+replacing it. Since each executor is permanently bound to its own registry, this is also how
+an account moves to a new admitted venue set — for example one that supports a new protocol.
+
+An account with no approved executor validates nothing: `isAllowedCallData` returns false.
+
+### What is deliberately *not* constrained
+
+There are no per-account, per-venue volume limits, epochs, or directional budgets. A
+policy-owner (session key) may move the account's full balance between admitted venues at
+will. The remaining constraints are qualitative, not quantitative:
+
+- output is credited only to the account, so funds cannot leave it;
+- only admitted venues, only in admitted directions;
+- every hop must clear the loss-capped preview floor and the signed absolute floor.
+
+The residual exposure is **attrition**, not theft: a compromised session key can cycle
+deposit → redeem → deposit and lose up to `maxLossBps` per hop on sponsor-paid gas. The risk
+guardian's deposit pause is the only volume-side control, and owner-signed `removeOwner` is
+the revocation path.
 
 ### Risk guardian
 
@@ -234,10 +249,8 @@ funds, change limits, admit an adapter, or block redemptions. This adds incident
 value without giving the guardian a withdrawal or migration power. Recovery from a false
 pause requires a new deployment and owner-approved migration.
 
-Because registries are per-account there is no single set to check membership against, so the
-pause target must instead prove it authorizes this executor (`IYieldAdapter.executor()`). A
-mistyped address therefore reverts `AdapterNotAllowed` rather than recording a pause that
-protects nothing.
+The pause target must be a venue this executor's own registry admitted, so a mistyped address
+reverts `VenueNotAllowed` rather than recording a pause that protects nothing.
 
 ### Trust boundary: authenticity vs Grow approval
 
@@ -404,22 +417,22 @@ swept into another account's redeem.
 
 | Change | What is required |
 |---|---|
-| New vault for an already-supported protocol | Deploy the adapter (pinning the live executor), then `addVaults` from the registry owner. No redeploy of anything else; accounts already on that registry see it immediately, and each still sets its own limits. |
-| New **protocol** | Deploy a new registry pinning the additional registrar, deploy adapters for it, `addVaults` the full intended set, then each account reselects the registry via one owner-signed `setAccountRegistry`. Executor, policy module, and existing adapters are untouched. |
+| New venue for an already-supported protocol | `addVaults` from the registry owner. The protocol's adapter already exists and serves every venue of that protocol, so nothing is redeployed and every account sees the venue immediately. |
+| New **protocol** | Deploy a new executor pinning the additional registrar (it deploys its own registry), deploy adapters for it, `addVaults` the full intended set, then each account switches with one owner-signed `policy.setExecutor`. The policy module and the old stack are untouched. |
 | Change to executor or policy-module logic | Full stack migration, as before: a new executor, new adapters pinned to it, a new registry, and a new policy-module install on each account. |
 
-A new registry may readmit existing adapter addresses, so a protocol expansion does not force
-adapter redeploys. Because admission and per-account limits are independent gates, accounts
-that reselect keep the limits they already signed for and gain nothing they have not
-authorized.
+Adapters pin their executor, so a new executor requires new adapter deployments; the registrars
+and venue addresses they are wired to do not change. Accounts that switch gain the whole new
+venue set at once, which is the trade for having no per-account venue gate.
 
 ### Deployment procedure
 
 `script/Deploy.s.sol` drives `GrowYieldDeployer.deployStack` from `script/config/<env>.json`.
-One atomic transaction deploys the executor, policy module, every adapter, and the registry;
-admits the configured vault set; and offers registry ownership to `.registry.owner`:
+One atomic transaction deploys the executor (which deploys its registry), the policy module,
+and every adapter; admits the configured vault set; and offers registry ownership to
+`.registry.owner`:
 
-1. Registry is constructed declaring the shared deployer as its initial owner.
+1. The executor's init code names the shared deployer as its registry's initial owner.
 2. The deployer calls `addVaults` with the full configured set, then `transferOwnership`.
 3. Governance calls `acceptOwnership()` in a later transaction.
 
@@ -433,8 +446,8 @@ the script rather than reverting on-chain. It also asserts post-deployment that 
 pins the expected executor, admitted every configured vault with the expected code hash,
 directions, and protocol, and is pending transfer to the configured owner.
 
-Accounts are not enrolled by deployment. Each account's owner path must call
-`setAccountRegistry` before `setAdapterPolicy`; the executor itself is ownerless.
+Accounts are not enrolled by deployment. Each account enrolls itself with one owner-signed
+`installValidation`, whose install data names the executor it approves.
 
 Fork-tested venue constructor arguments and authenticity results are recorded in
 [`ADAPTER-DEPLOYMENT-MATRIX.md`](ADAPTER-DEPLOYMENT-MATRIX.md).
@@ -505,16 +518,13 @@ sequenceDiagram
     O->>EP: Owner-signed UserOp, nonce key 1
     EP->>A: validate via entity-0 global owner validator
     EP->>A: installValidation(Grow entity, executeBatch selector)
-    A->>P: onInstall(abi.encode(entityId, policyOwners))
-    P->>P: Store entity and policy-owner addresses under account
+    A->>P: onInstall(abi.encode(entityId, policyOwners, executor))
+    P->>P: Store entity, policy owners, and approved executor under account
+    Note over P,X: One transaction is the whole opt-in: the executor names<br/>the registry, the registry names the venues.
 
-    O->>EP: Owner-signed registry-selection UserOp, nonce key 1
-    EP->>A: execute(executor.setAccountRegistry(registry))
-    A->>X: Record this account's adapter registry
-
-    O->>EP: Owner-signed configuration UserOp, nonce key 1
-    EP->>A: execute(executor.setAdapterPolicy(...))
-    A->>X: Set finite directional limits
+    O->>EP: Later owner-signed executor switch (new venue set)
+    EP->>A: execute(policy.setExecutor(newExecutor))
+    A->>P: Replace this account's approved executor
 
     O->>EP: Later owner-signed rotation/revocation UserOp
     EP->>A: execute(policy.addOwner/removeOwner)
@@ -526,7 +536,8 @@ Recommended install data is:
 ```text
 abi.encode(
   growEntityId,
-  address[] policyOwners
+  address[] policyOwners,
+  address approvedExecutor
 )
 ```
 
@@ -536,10 +547,10 @@ closed if the account passes a different entity during later validation. Grow st
 one entity per account and rejects a second installation; uninstall the old entity
 before selecting a replacement so the account cannot retain stale dual registrations.
 
-The account-owner path—not the Grow policy—must also select the registry and set finite
-adapter limits, in that order (`setAdapterPolicy` reverts `RegistryNotSet` otherwise). A
-policy owner cannot authorize `installValidation`, owner management, policy management,
-registry selection, guardian actions, arbitrary `execute`, or an arbitrary `executeBatch`.
+`approvedExecutor` completes enrollment in the same call: no follow-up configuration
+transaction is required, and the account can never be left half-configured. A policy owner
+cannot authorize `installValidation`, owner management, policy management, `setExecutor`,
+guardian actions, arbitrary `execute`, or an arbitrary `executeBatch`.
 
 ## Automated rebalance execution flow
 

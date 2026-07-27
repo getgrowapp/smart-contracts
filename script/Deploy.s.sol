@@ -2,6 +2,7 @@
 pragma solidity 0.8.36;
 
 import {Script, console2} from "forge-std/Script.sol";
+import {VmSafe} from "forge-std/Vm.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {GrowYieldExecutor} from "../src/GrowYieldExecutor.sol";
@@ -78,33 +79,31 @@ contract Deploy is Script {
         // --- Executor init code + predicted address ---
         address riskGuardian = vm.parseJsonAddress(config, ".executor.riskGuardian");
         require(riskGuardian != CREATE2_FACTORY, "risk guardian is CREATE2 factory");
+        // The executor deploys its own registry, so the registrars and the registry's initial
+        // owner (this deployer, which hands over in the same transaction) are executor args.
+        IGrowYieldAdapterRegistry.Registrars memory registrars = _registrars(config);
         params.executorInit = abi.encodePacked(
             type(GrowYieldExecutor).creationCode,
-            abi.encode(vm.parseJsonUint(config, ".executor.maxLossBps").toUint16(), riskGuardian)
+            abi.encode(
+                vm.parseJsonUint(config, ".executor.maxLossBps").toUint16(),
+                riskGuardian,
+                address(deployer),
+                registrars
+            )
         );
         params.executorSalt = _salt(config, "executor");
         address executorAddr = vm.computeCreate2Address(
             params.executorSalt, keccak256(params.executorInit), address(deployer)
         );
 
-        // --- Policy module init code (binds the executor address) ---
-        params.policyInit = _policyInit(config, executorAddr);
+        // --- Policy module init code (pins no executor; accounts approve one at install) ---
+        params.policyInit = _policyInit(config);
         params.policySalt = _salt(config, "policyModule");
-
-        // --- Registrars: pinned per registry, and the adapters' constructor arguments ---
-        IGrowYieldAdapterRegistry.Registrars memory registrars = _registrars(config);
 
         // --- One adapter per supported protocol ---
         AdapterPlan memory plan = _buildAdapters(config, executorAddr, registrars, deployer);
         params.adapterSalts = plan.salts;
         params.adapterInits = plan.inits;
-
-        // --- Registry init code (binds executor + deployer-held initial ownership) ---
-        params.registryInit = abi.encodePacked(
-            type(GrowYieldAdapterRegistry).creationCode,
-            abi.encode(executorAddr, address(deployer), registrars)
-        );
-        params.registrySalt = _salt(config, "registry");
 
         // --- Initial venue set (binds predicted adapter addresses) ---
         params.vaults = _buildVaults(config, plan);
@@ -154,15 +153,10 @@ contract Deploy is Script {
     // Init-code builders
     // -------------------------------------------------------------------------
 
-    function _policyInit(string memory config, address executor)
-        internal
-        pure
-        returns (bytes memory)
-    {
+    function _policyInit(string memory config) internal pure returns (bytes memory) {
         return abi.encodePacked(
             type(GrowYieldPolicyModule).creationCode,
             abi.encode(
-                executor,
                 vm.parseJsonAddress(config, ".policyModule.requiredPaymaster"),
                 vm.parseJsonUint(config, ".policyModule.maxVerificationGas").toUint128(),
                 vm.parseJsonUint(config, ".policyModule.maxCallGas").toUint128(),
@@ -344,7 +338,6 @@ contract Deploy is Script {
         );
 
         GrowYieldPolicyModule policy = GrowYieldPolicyModule(policyModule);
-        require(policy.executor() == executor, "wrong policy executor");
         require(
             policy.requiredPaymaster()
                 == vm.parseJsonAddress(config, ".policyModule.requiredPaymaster"),
@@ -362,6 +355,9 @@ contract Deploy is Script {
     ) internal view {
         GrowYieldAdapterRegistry r = GrowYieldAdapterRegistry(registry);
         require(r.executor() == executor, "wrong registry executor");
+        require(
+            address(GrowYieldExecutor(executor).registry()) == registry, "executor/registry unbound"
+        );
         require(r.owner() == deployer, "unexpected registry owner");
         require(r.pendingOwner() == params.registryOwner, "registry not offered to governance");
         require(r.vaultCount() == params.vaults.length, "unexpected registry venue count");
@@ -442,6 +438,8 @@ contract Deploy is Script {
     }
 
     /// @dev Serializes the deployment to `deployments/<env>.json`. Commit the file for tracking.
+    ///      Only a real broadcast writes: a simulation would otherwise overwrite the record of
+    ///      what is actually live with addresses that were never deployed.
     function _writeDeployment(
         string memory env,
         address deployer,
@@ -490,6 +488,10 @@ contract Deploy is Script {
         string memory json = vm.serializeAddress(root, "vaultAddresses", vaultAddrs);
 
         string memory path = string.concat("deployments/", env, ".json");
+        if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) {
+            console2.log("Simulation only; not writing", path);
+            return;
+        }
         vm.writeJson(json, path);
         console2.log("Deployment written to", path);
     }

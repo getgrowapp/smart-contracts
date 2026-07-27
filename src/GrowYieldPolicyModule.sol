@@ -14,6 +14,8 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
+import {IGrowYieldAdapterRegistry} from "./interfaces/IGrowYieldAdapterRegistry.sol";
+import {IGrowYieldExecutor} from "./interfaces/IGrowYieldExecutor.sol";
 import {IGrowYieldPolicyModule} from "./interfaces/IGrowYieldPolicyModule.sol";
 import {GrowYieldPolicyLib} from "./GrowYieldPolicyLib.sol";
 
@@ -35,9 +37,6 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
 
     /// @notice Maximum policy owners stored in account-associated consecutive slots.
     uint8 public constant MAX_OWNERS = 8;
-
-    /// @inheritdoc IGrowYieldPolicyModule
-    address public immutable executor;
 
     /// @inheritdoc IGrowYieldPolicyModule
     address public immutable requiredPaymaster;
@@ -68,14 +67,15 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
     struct AccountConfig {
         uint32 entityId;
         uint8 count;
+        address executor;
         address[MAX_OWNERS] owners;
     }
 
     mapping(address account => AccountConfig) private _accountConfigs;
 
-    /// @dev Pins the executor, required paymaster, and all gas/fee ceilings immutably.
+    /// @dev Pins the required paymaster and all gas/fee ceilings immutably. The executor is
+    ///      per-account and account-settable, so it is not fixed here.
     constructor(
-        address executor_,
         address requiredPaymaster_,
         uint128 maxVerificationGas_,
         uint128 maxCallGas_,
@@ -86,13 +86,12 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
         uint128 maxFeePerGas_
     ) EIP712("GrowYieldPolicy", "1") {
         if (
-            executor_.code.length == 0 || requiredPaymaster_.code.length == 0
-                || maxVerificationGas_ == 0 || maxCallGas_ == 0 || maxPreVerificationGas_ == 0
-                || maxPaymasterVerificationGas_ == 0 || maxPaymasterPostOpGas_ == 0
-                || maxFeePerGas_ == 0 || maxPriorityFeePerGas_ > maxFeePerGas_
+            requiredPaymaster_.code.length == 0 || maxVerificationGas_ == 0 || maxCallGas_ == 0
+                || maxPreVerificationGas_ == 0 || maxPaymasterVerificationGas_ == 0
+                || maxPaymasterPostOpGas_ == 0 || maxFeePerGas_ == 0
+                || maxPriorityFeePerGas_ > maxFeePerGas_
         ) revert InvalidConfiguration();
 
-        executor = executor_;
         requiredPaymaster = requiredPaymaster_;
         maxVerificationGas = maxVerificationGas_;
         maxCallGas = maxCallGas_;
@@ -155,6 +154,18 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
         return _accountConfigs[account].entityId;
     }
 
+    /// @inheritdoc IGrowYieldPolicyModule
+    function setExecutor(address executor) external {
+        AccountConfig storage accountConfig = _accountConfigs[msg.sender];
+        if (accountConfig.entityId == 0) revert PolicyNotInstalled();
+        _setExecutor(msg.sender, executor);
+    }
+
+    /// @inheritdoc IGrowYieldPolicyModule
+    function accountExecutor(address account) external view returns (address) {
+        return _accountConfigs[account].executor;
+    }
+
     /// @inheritdoc IValidationModule
     function validateUserOp(
         uint32 entityId,
@@ -195,7 +206,9 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
         view
         returns (bool)
     {
-        return GrowYieldPolicyLib.isAllowed(account, executor, callData);
+        address accountExecutor_ = _accountConfigs[account].executor;
+        return accountExecutor_ != address(0)
+            && GrowYieldPolicyLib.isAllowed(account, accountExecutor_, callData);
     }
 
     /// @inheritdoc IValidationModule
@@ -217,12 +230,15 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
         return ERC1271_INVALID;
     }
 
-    /// @notice Configure the installing account's entity and bounded policy-owner set.
+    /// @notice Configure the installing account's entity, policy-owner set, and executor.
     /// @dev One Grow entity is supported per account. Uninstall it before choosing another.
+    ///      This single call is the account's whole opt-in: the executor names the registry, the
+    ///      registry names the venues, and there is nothing further to configure per venue.
     function onInstall(bytes calldata data) external override {
         if (_accountConfigs[msg.sender].entityId != 0) revert PolicyAlreadyInstalled();
 
-        (uint32 entityId, address[] memory initialOwners) = abi.decode(data, (uint32, address[]));
+        (uint32 entityId, address[] memory initialOwners, address executor) =
+            abi.decode(data, (uint32, address[], address));
         if (entityId == 0 || initialOwners.length == 0 || initialOwners.length > MAX_OWNERS) {
             revert InvalidConfiguration();
         }
@@ -231,6 +247,7 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
         for (uint256 i; i < initialOwners.length; ++i) {
             _addOwner(msg.sender, initialOwners[i]);
         }
+        _setExecutor(msg.sender, executor);
     }
 
     /// @notice Clear the uninstalling account's entity and policy-owner set.
@@ -240,7 +257,7 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
 
     /// @notice Return this module's semantic identifier.
     function moduleId() external pure returns (string memory) {
-        return "grow.yield-policy.3.0.0";
+        return "grow.yield-policy.4.0.0";
     }
 
     /// @inheritdoc IERC165
@@ -271,7 +288,32 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
         emit OwnerAdded(account, owner);
     }
 
-    /// @dev Deletes the account's entity and every stored policy owner.
+    /// @dev Pins the single executor whose `execute` batches this account's policy accepts.
+    ///
+    ///      This address is load-bearing well beyond routing: once set, a policy owner (session
+    ///      key) can sign a batch that approves it for the account's full balance and calls
+    ///      `execute` on it with arbitrary operations. An owner typo here would therefore
+    ///      become a session-key-exploitable drain, so the address must prove it is a Grow
+    ///      executor bound to a registry that names it back — a property no arbitrary contract
+    ///      can fake without deploying the real pair.
+    function _setExecutor(address account, address executor) private {
+        if (executor.code.length == 0) revert InvalidConfiguration();
+
+        try IGrowYieldExecutor(executor).registry() returns (IGrowYieldAdapterRegistry registry) {
+            // A non-conforming registry reverts loudly here; this is an owner-path call, so
+            // failing the transaction is the right outcome either way.
+            if (address(registry) == address(0) || registry.executor() != executor) {
+                revert InvalidConfiguration();
+            }
+        } catch {
+            revert InvalidConfiguration();
+        }
+
+        _accountConfigs[account].executor = executor;
+        emit ExecutorSet(account, executor);
+    }
+
+    /// @dev Deletes the account's entity, executor, and every stored policy owner.
     function _clearAccountConfig(address account) private {
         AccountConfig storage accountConfig = _accountConfigs[account];
         uint8 count = accountConfig.count;
@@ -282,6 +324,8 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
         }
         accountConfig.count = 0;
         accountConfig.entityId = 0;
+        accountConfig.executor = address(0);
+        emit ExecutorSet(account, address(0));
     }
 
     /// @dev True if every account gas and fee field is within the policy ceilings.
