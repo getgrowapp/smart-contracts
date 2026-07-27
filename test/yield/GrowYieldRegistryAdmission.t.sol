@@ -6,7 +6,12 @@ import {IVaultV2} from "vault-v2/interfaces/IVaultV2.sol";
 
 import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
 import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
+import {AaveV3Adapter} from "../../src/adapters/AaveV3Adapter.sol";
+import {MorphoVaultV2Adapter} from "../../src/adapters/MorphoVaultV2Adapter.sol";
 import {CapyFiAdapter} from "../../src/adapters/CapyFiAdapter.sol";
+import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
+import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
+import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
 import {EulerEarnAdapter} from "../../src/adapters/EulerEarnAdapter.sol";
 import {EulerEVaultAdapter} from "../../src/adapters/EulerEVaultAdapter.sol";
 import {ICapyFiComptroller} from "../../src/interfaces/ICapyFiComptroller.sol";
@@ -44,6 +49,13 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
     EulerEarnAdapter internal earnAdapter;
     CapyFiAdapter internal capyAdapter;
 
+    /// @dev The subject under test: one contract that both admits venues and would route
+    ///      operations through them. Adapters must authorize it specifically, so this suite
+    ///      deploys its own set rather than reusing the base fixture's.
+    GrowYieldExecutor internal full;
+    AaveV3Adapter internal fullAave;
+    MorphoVaultV2Adapter internal fullMorpho;
+
     address internal evaultVault;
     address internal earnVaultAddr;
     address internal capyVault;
@@ -59,13 +71,21 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
         earnFactory.setVault(address(earnVault), true);
         capyMarket = new MockCapyFiMarket(new MockUnderlying());
 
-        evaultAdapter =
-            new EulerEVaultAdapter(IEulerEVaultFactory(address(evkFactory)), address(executor));
-        earnAdapter =
-            new EulerEarnAdapter(IEulerEarnFactory(address(earnFactory)), address(executor));
-        capyAdapter = new CapyFiAdapter(
-            address(executor), ICapyFiComptroller(address(capyMarket.comptroller()))
+        full = new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian, address(this), _registrars());
+
+        fullAave = new AaveV3Adapter(
+            IAaveV3Pool(address(aavePool)),
+            IAaveProtocolDataProvider(address(aaveDataProvider)),
+            address(full)
         );
+        fullMorpho = new MorphoVaultV2Adapter(
+            IMorphoVaultEligibility(address(morphoEligibility)), address(full)
+        );
+        evaultAdapter =
+            new EulerEVaultAdapter(IEulerEVaultFactory(address(evkFactory)), address(full));
+        earnAdapter = new EulerEarnAdapter(IEulerEarnFactory(address(earnFactory)), address(full));
+        capyAdapter =
+            new CapyFiAdapter(address(full), ICapyFiComptroller(address(capyMarket.comptroller())));
 
         evaultVault = address(evault);
         earnVaultAddr = address(earnVault);
@@ -89,11 +109,9 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
         });
     }
 
-    /// @dev A fresh executor with an empty venue set, pinning every protocol this suite
-    ///      exercises. It is its own registry, so admission runs against the same contract that
-    ///      would later route operations.
-    function _fullRegistry() internal returns (GrowYieldExecutor) {
-        return new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian, address(this), _registrars());
+    /// @dev The suite's empty subject, pinning every protocol exercised here.
+    function _fullRegistry() internal view returns (GrowYieldExecutor) {
+        return full;
     }
 
     function _add(GrowYieldExecutor to, address adapter, address vault, Protocol protocol)
@@ -108,7 +126,7 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
     /// @dev Rogue adapter reporting `asset_` and a brand-new position token, so the
     ///      protocol-independent checks pass and only the registrar dispatch can reject it.
     function _rogue(address asset_) internal returns (MockRogueVenueAdapter) {
-        return new MockRogueVenueAdapter(address(executor), asset_, address(new MockUnderlying()));
+        return new MockRogueVenueAdapter(address(full), asset_, address(new MockUnderlying()));
     }
 
     function _rogue() internal returns (MockRogueVenueAdapter) {
@@ -133,10 +151,10 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
         IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
             new IGrowYieldAdapterRegistry.VaultConfig[](5);
         vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
-            address(aaveAdapter), aaveVault, Protocol.AAVE, true, true
+            address(fullAave), aaveVault, Protocol.AAVE, true, true
         );
         vaults[1] = IGrowYieldAdapterRegistry.VaultConfig(
-            address(morphoAdapter), morphoVault, Protocol.MORPHO, true, true
+            address(fullMorpho), morphoVault, Protocol.MORPHO, true, true
         );
         vaults[2] = IGrowYieldAdapterRegistry.VaultConfig(
             address(evaultAdapter), evaultVault, Protocol.EULER_EVK, true, true
@@ -177,20 +195,20 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
     ///      same adapter and reuses its pinned code hash.
     function test_admitsSecondVenueUnderTheSameAdapter() public {
         GrowYieldExecutor full = _fullRegistry();
-        _add(full, address(aaveAdapter), aaveVault, Protocol.AAVE);
-        _add(full, address(aaveAdapter), aaveVaultOther, Protocol.AAVE);
+        _add(full, address(fullAave), aaveVault, Protocol.AAVE);
+        _add(full, address(fullAave), aaveVaultOther, Protocol.AAVE);
 
         assertEq(full.vaultCount(), 2);
-        assertEq(full.vaultAdapter(aaveVaultOther), address(aaveAdapter));
-        assertEq(full.adapterCodeHash(address(aaveAdapter)), address(aaveAdapter).codehash);
+        assertEq(full.vaultAdapter(aaveVaultOther), address(fullAave));
+        assertEq(full.adapterCodeHash(address(fullAave)), address(fullAave).codehash);
     }
 
     function test_rejectsDuplicateVenue() public {
         GrowYieldExecutor full = _fullRegistry();
-        _add(full, address(aaveAdapter), aaveVault, Protocol.AAVE);
+        _add(full, address(fullAave), aaveVault, Protocol.AAVE);
 
         vm.expectRevert(IGrowYieldAdapterRegistry.VaultAlreadyRegistered.selector);
-        _add(full, address(aaveAdapter), aaveVault, Protocol.AAVE);
+        _add(full, address(fullAave), aaveVault, Protocol.AAVE);
     }
 
     /// @dev Two venues reporting the same position token would double-count one balance against
@@ -221,13 +239,6 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
         Protocol[5] memory protocols = [
             Protocol.AAVE, Protocol.MORPHO, Protocol.EULER_EVK, Protocol.EULER_EARN, Protocol.CAPYFI
         ];
-        address[5] memory adapters = [
-            address(aaveAdapter),
-            address(morphoAdapter),
-            address(evaultAdapter),
-            address(earnAdapter),
-            address(capyAdapter)
-        ];
         address[5] memory venues = [aaveVault, morphoVault, evaultVault, earnVaultAddr, capyVault];
 
         for (uint256 i; i < protocols.length; ++i) {
@@ -249,8 +260,12 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
 
             GrowYieldExecutor limited =
                 new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian, address(this), r);
+            // Adapters authorize one executor, so the probe must be bound to this one.
+            MockRogueVenueAdapter rogue = new MockRogueVenueAdapter(
+                address(limited), address(underlying), address(new MockUnderlying())
+            );
             vm.expectRevert(IGrowYieldAdapterRegistry.UnsupportedProtocol.selector);
-            _add(limited, adapters[i], venues[i], protocols[i]);
+            _add(limited, address(rogue), venues[i], protocols[i]);
         }
     }
 
@@ -377,7 +392,7 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
 
         GrowYieldExecutor full = _fullRegistry();
         vm.expectRevert(IGrowYieldAdapterRegistry.NotCanonicalVenue.selector);
-        _add(full, address(morphoAdapter), address(unregistered), Protocol.MORPHO);
+        _add(full, address(fullMorpho), address(unregistered), Protocol.MORPHO);
     }
 
     /// @dev A wrapper that can still gain or drop adapters is not a frozen single-adapter shape,
@@ -391,7 +406,7 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
 
         GrowYieldExecutor full = _fullRegistry();
         vm.expectRevert(IGrowYieldAdapterRegistry.NotCanonicalVenue.selector);
-        _add(full, address(morphoAdapter), address(wrapper), Protocol.MORPHO);
+        _add(full, address(fullMorpho), address(wrapper), Protocol.MORPHO);
     }
 
     function test_notCanonical_morphoMultipleAdapters() public {
@@ -401,7 +416,7 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
 
         GrowYieldExecutor full = _fullRegistry();
         vm.expectRevert(IGrowYieldAdapterRegistry.NotCanonicalVenue.selector);
-        _add(full, address(morphoAdapter), address(wrapper), Protocol.MORPHO);
+        _add(full, address(fullMorpho), address(wrapper), Protocol.MORPHO);
     }
 
     function test_notCanonical_morphoLiquidityAdapterNotFromFactory() public {
@@ -410,7 +425,7 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
 
         GrowYieldExecutor full = _fullRegistry();
         vm.expectRevert(IGrowYieldAdapterRegistry.NotCanonicalVenue.selector);
-        _add(full, address(morphoAdapter), address(wrapper), Protocol.MORPHO);
+        _add(full, address(fullMorpho), address(wrapper), Protocol.MORPHO);
     }
 
     /// @dev Liquidity must route to the frozen `adapters(0)`; an allocator pointing it elsewhere
@@ -422,7 +437,7 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
 
         GrowYieldExecutor full = _fullRegistry();
         vm.expectRevert(IGrowYieldAdapterRegistry.NotCanonicalVenue.selector);
-        _add(full, address(morphoAdapter), address(wrapper), Protocol.MORPHO);
+        _add(full, address(fullMorpho), address(wrapper), Protocol.MORPHO);
     }
 
     function test_notCanonical_morphoLiquidityDataNotEmpty() public {
@@ -432,7 +447,7 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
 
         GrowYieldExecutor full = _fullRegistry();
         vm.expectRevert(IGrowYieldAdapterRegistry.NotCanonicalVenue.selector);
-        _add(full, address(morphoAdapter), address(wrapper), Protocol.MORPHO);
+        _add(full, address(fullMorpho), address(wrapper), Protocol.MORPHO);
     }
 
     /// @dev A liquidity adapter genuinely created by the pinned factory, but parented to a
@@ -445,7 +460,7 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
 
         GrowYieldExecutor full = _fullRegistry();
         vm.expectRevert(IGrowYieldAdapterRegistry.NotCanonicalVenue.selector);
-        _add(full, address(morphoAdapter), address(wrapper), Protocol.MORPHO);
+        _add(full, address(fullMorpho), address(wrapper), Protocol.MORPHO);
     }
 
     function test_notCanonical_morphoChildNotEligible() public {
@@ -457,7 +472,7 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
 
         GrowYieldExecutor full = _fullRegistry();
         vm.expectRevert(IGrowYieldAdapterRegistry.NotCanonicalVenue.selector);
-        _add(full, address(morphoAdapter), address(wrapper), Protocol.MORPHO);
+        _add(full, address(fullMorpho), address(wrapper), Protocol.MORPHO);
     }
 
     /// @dev The wrapper and its child must share one underlying, or the pinned asset would not
@@ -470,7 +485,7 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
 
         GrowYieldExecutor full = _fullRegistry();
         vm.expectRevert(IGrowYieldAdapterRegistry.NotCanonicalVenue.selector);
-        _add(full, address(morphoAdapter), address(wrapper), Protocol.MORPHO);
+        _add(full, address(fullMorpho), address(wrapper), Protocol.MORPHO);
     }
 
     function test_notCanonical_eulerVaultsNotRegistered() public {

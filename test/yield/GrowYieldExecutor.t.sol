@@ -194,16 +194,21 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         executor.pauseVaultDeposits(aaveVault);
         assertTrue(executor.depositsPaused(aaveVault));
 
-        // The guardian can protect but cannot re-expose.
+        // The guardian can protect but cannot re-expose: un-pausing is `onlyOwner`.
         vm.prank(riskGuardian);
-        vm.expectRevert(IGrowYieldExecutor.NotAuthorizedToPause.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, riskGuardian)
+        );
         executor.unpauseVaultDeposits(aaveVault);
 
-        vm.prank(makeAddr("stranger"));
-        vm.expectRevert(IGrowYieldExecutor.NotAuthorizedToPause.selector);
+        address stranger = makeAddr("stranger");
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger)
+        );
         executor.unpauseVaultDeposits(aaveVault);
 
-        // The registry owner (governance for this executor) can.
+        // The owner (governance for this stack) can.
         vm.expectEmit(true, false, false, false, address(executor));
         emit IGrowYieldExecutor.VaultDepositsUnpaused(aaveVault);
         executor.unpauseVaultDeposits(aaveVault);
