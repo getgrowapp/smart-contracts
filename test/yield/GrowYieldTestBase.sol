@@ -62,7 +62,6 @@ abstract contract GrowYieldTestBase is Test {
     uint128 internal constant MAX_FEE = 2 gwei;
     uint32 internal constant POLICY_ENTITY_ID = 1;
 
-    GrowYieldAdapterRegistry internal registry;
     GrowYieldExecutor internal executor;
     GrowYieldPolicyModule internal policyModule;
     address internal sponsorPaymaster;
@@ -121,11 +120,11 @@ abstract contract GrowYieldTestBase is Test {
         _deployAaveVenues();
         _deployMorphoVenues();
 
+        // Admission and execution are one contract: deploy it, deploy adapters that authorize
+        // it, then admit the venues.
         executor = _deployExecutor(address(this));
-        registry = GrowYieldAdapterRegistry(address(executor.registry()));
-
         _deployAdapters();
-        registry.addVaults(_defaultVaults());
+        executor.addVaults(_defaultVaults());
 
         policyModule = new GrowYieldPolicyModule(
             MAX_VERIFICATION_GAS,
@@ -156,9 +155,9 @@ abstract contract GrowYieldTestBase is Test {
         );
     }
 
-    /// @dev A fresh executor over the same mock venues, with its own registry owned by `owner_`.
-    ///      Each executor is permanently bound to the registry it deploys, so this is how a test
-    ///      obtains a second, independent venue set.
+    /// @dev A fresh executor over the same mock venues, owned by `owner_` and holding its own
+    ///      empty venue set. Each executor is its own registry, so this is how a test obtains a
+    ///      second, independent venue set.
     function _deployExecutor(address owner_) internal returns (GrowYieldExecutor) {
         return new GrowYieldExecutor(MAX_LOSS_BPS, riskGuardian, owner_, _mockRegistrars());
     }
@@ -210,7 +209,7 @@ abstract contract GrowYieldTestBase is Test {
         vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
             address(aaveAdapter), vault, Protocol.AAVE, true, true
         );
-        registry.addVaults(vaults);
+        executor.addVaults(vaults);
     }
 
     /// @dev Adds an extra Aave reserve served by the same pool, provider, and adapter.
@@ -243,12 +242,12 @@ abstract contract GrowYieldTestBase is Test {
     /// @dev The venue's source token for `kind`, taken from the registry's admitted pair
     ///      exactly as the executor does.
     function _sourceToken(address vault, OperationKind kind) internal view returns (address) {
-        Venue memory v = registry.venue(vault);
+        Venue memory v = executor.venue(vault);
         return kind == OperationKind.DEPOSIT ? v.asset : v.positionToken;
     }
 
     function _outputToken(address vault, OperationKind kind) internal view returns (address) {
-        Venue memory v = registry.venue(vault);
+        Venue memory v = executor.venue(vault);
         return kind == OperationKind.DEPOSIT ? v.positionToken : v.asset;
     }
 

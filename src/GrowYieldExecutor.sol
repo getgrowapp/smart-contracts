@@ -8,6 +8,7 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 
 import {GrowYieldAdapterRegistry} from "./GrowYieldAdapterRegistry.sol";
 import {IGrowYieldAdapterRegistry, Venue} from "./interfaces/IGrowYieldAdapterRegistry.sol";
+// solhint-disable-next-line no-unused-import
 import {
     AmountMode,
     IGrowYieldExecutor,
@@ -18,11 +19,17 @@ import {
 import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 
 /// @title GrowYieldExecutor
-/// @notice Routes a caller's own funds through venues admitted by this executor's registry.
-/// @dev The executor and its registry are one unit: the constructor deploys the registry, so the
-///      registry names this executor and this executor names that registry, both immutably and
-///      with nothing settable afterwards. Which venues exist is therefore a single governance
-///      decision made by the registry owner, not a per-account configuration.
+/// @notice Routes a caller's own funds through venues this same contract has admitted.
+/// @dev Admission and execution are one contract: `GrowYieldExecutor` *is* the venue registry,
+///      inheriting `GrowYieldAdapterRegistry`. There is no address to keep in sync, no
+///      initializer window, and no way to express an executor pointed at a registry that does
+///      not name it back. Which venues exist is a single governance decision by the owner, not
+///      a per-account configuration.
+///
+///      Two authorities, deliberately distinct and required to be different addresses:
+///      the **owner** (`Ownable2Step`) admits venues and re-enables paused deposits; the
+///      immutable **risk guardian** can only pause deposits. Neither can move funds or block a
+///      redemption.
 ///
 ///      The executor holds no per-account state and no per-account permission. It is
 ///      permissionless by construction: an operation pulls the source token from `msg.sender` and
@@ -35,21 +42,22 @@ import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 ///      the venue and direction, output must clear both the caller's signed floor and a
 ///      loss-capped preview, and no residual may be left on the adapter.
 ///
-///      Deposit-side wind-down is reversible on purpose: the risk guardian or the registry owner
-///      may pause a venue's deposits, and only the registry owner may re-enable them. Protecting
-///      is fast and unilateral; re-exposing accounts is a governance decision. Redemptions are
-///      never pausable, so a paused venue is one nobody can enter and everybody can leave.
+///      Deposit-side wind-down is reversible on purpose: the risk guardian or the owner may
+///      pause a venue's deposits, and only the owner may re-enable them. Protecting is fast and
+///      unilateral; re-exposing accounts is a governance decision. Redemptions are never
+///      pausable, so a paused venue is one nobody can enter and everybody can leave.
 /// @custom:security-contact security@getgrowapp.co
-contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
+contract GrowYieldExecutor is
+    GrowYieldAdapterRegistry,
+    ReentrancyGuardTransient,
+    IGrowYieldExecutor
+{
     using SafeERC20 for IERC20;
 
     uint256 private constant BPS = 10_000;
 
     /// @notice Hard ceiling on the constructor-set loss cap (1%).
     uint16 public constant MAX_LOSS_BPS_CEILING = 100;
-
-    /// @inheritdoc IGrowYieldExecutor
-    IGrowYieldAdapterRegistry public immutable registry;
 
     /// @inheritdoc IGrowYieldExecutor
     uint16 public immutable maxLossBps;
@@ -62,36 +70,32 @@ contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
 
     /// @param maxLossBps_ Maximum shortfall from preview, in basis points; must be nonzero so
     ///        venue rounding against the preview cannot brick operations.
-    /// @param riskGuardian_ Address able to pause venue deposits; cannot un-pause.
-    /// @param registryOwner_ Initial owner of the registry this constructor deploys; should be a
-    ///        Safe or TimelockController, or a deployer that hands over in the same transaction.
-    /// @param registrars_ Canonical protocol registrars pinned for the registry's lifetime.
+    /// @param riskGuardian_ Address able to pause venue deposits; cannot un-pause, and must
+    ///        differ from `owner_` so that protection and re-exposure are never one key.
+    /// @param owner_ Address authorized to admit venues and un-pause; should be a Safe or
+    ///        TimelockController, or a deployer that hands over in the same transaction.
+    /// @param registrars_ Canonical protocol registrars pinned for this contract's lifetime.
     constructor(
         uint16 maxLossBps_,
         address riskGuardian_,
-        address registryOwner_,
+        address owner_,
         IGrowYieldAdapterRegistry.Registrars memory registrars_
-    ) {
-        if (maxLossBps_ == 0 || maxLossBps_ > MAX_LOSS_BPS_CEILING || riskGuardian_ == address(0)) {
-            revert Invalid();
-        }
+    ) GrowYieldAdapterRegistry(owner_, registrars_) {
+        if (
+            maxLossBps_ == 0 || maxLossBps_ > MAX_LOSS_BPS_CEILING || riskGuardian_ == address(0)
+                || riskGuardian_ == owner_
+        ) revert Invalid();
+
         maxLossBps = maxLossBps_;
         riskGuardian = riskGuardian_;
-
-        // Deployed here, not passed in: CREATE2 cannot resolve a mutual pin, because each
-        // contract's init code would have to contain the other's address. Creating the registry
-        // from the constructor makes both directions immutable with no initializer window.
-        registry = new GrowYieldAdapterRegistry(address(this), registryOwner_, registrars_);
     }
 
     /// @inheritdoc IGrowYieldExecutor
     function pauseVaultDeposits(address vault) external {
-        // Either authority may protect. Only governance may re-expose (see `unpause`).
-        if (msg.sender != riskGuardian && msg.sender != registry.owner()) {
-            revert NotAuthorizedToPause();
-        }
+        // Either authority may protect. Only the owner may re-expose (see `unpause`).
+        if (msg.sender != riskGuardian && msg.sender != owner()) revert NotAuthorizedToPause();
         // Reject a mistyped address instead of recording a pause that protects nothing.
-        if (registry.vaultAdapter(vault) == address(0)) revert VenueNotAllowed();
+        if (_venues[vault].adapter == address(0)) revert VenueNotAllowed();
 
         if (!depositsPaused[vault]) {
             depositsPaused[vault] = true;
@@ -100,9 +104,7 @@ contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
     }
 
     /// @inheritdoc IGrowYieldExecutor
-    function unpauseVaultDeposits(address vault) external {
-        if (msg.sender != registry.owner()) revert NotAuthorizedToPause();
-
+    function unpauseVaultDeposits(address vault) external onlyOwner {
         if (depositsPaused[vault]) {
             depositsPaused[vault] = false;
             emit VaultDepositsUnpaused(vault);
@@ -138,7 +140,7 @@ contract GrowYieldExecutor is ReentrancyGuardTransient, IGrowYieldExecutor {
     ) private returns (uint256 receivedOut, address outputTokenAddress) {
         address vault = op.vault;
         bool isDeposit = op.kind == OperationKind.DEPOSIT;
-        Venue memory venue = registry.venue(vault);
+        Venue memory venue = _venues[vault];
 
         bool venuePermits = isDeposit ? venue.canDeposit : venue.canRedeem;
         if (venue.adapter == address(0) || !venuePermits) revert VenueNotAllowed();

@@ -173,7 +173,7 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
         // Deployed before the prank/expectRevert pairs: a `new` inside the same statement
         // would consume the cheatcode instead of the `setExecutor` call.
         address noRegistryFn = address(new MockValidationModule());
-        address unboundRegistry = address(new FakeExecutor(address(registry)));
+        address unboundRegistry = address(new FakeExecutor(address(executor)));
         address zeroRegistry = address(new FakeExecutor(address(0)));
 
         vm.startPrank(account);

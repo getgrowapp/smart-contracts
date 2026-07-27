@@ -94,31 +94,54 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
     }
 
     function test_constructor_rejectsZeroMaxLossBps() public {
-        vm.expectRevert(IGrowYieldExecutor.Invalid.selector);
+        vm.expectRevert(IGrowYieldAdapterRegistry.Invalid.selector);
         new GrowYieldExecutor(0, riskGuardian, address(this), _mockRegistrars());
     }
 
     function test_constructor_rejectsLossCapAboveCeiling() public {
         uint16 overCeiling = executor.MAX_LOSS_BPS_CEILING() + 1;
-        vm.expectRevert(IGrowYieldExecutor.Invalid.selector);
+        vm.expectRevert(IGrowYieldAdapterRegistry.Invalid.selector);
         new GrowYieldExecutor(overCeiling, riskGuardian, address(this), _mockRegistrars());
     }
 
     function test_constructor_rejectsZeroRiskGuardian() public {
-        vm.expectRevert(IGrowYieldExecutor.Invalid.selector);
+        vm.expectRevert(IGrowYieldAdapterRegistry.Invalid.selector);
         new GrowYieldExecutor(MAX_LOSS_BPS, address(0), address(this), _mockRegistrars());
     }
 
-    /// @dev The executor and the registry it deployed name each other, immutably and with
-    ///      nothing settable. There is no per-account registry selection to get wrong.
-    function test_executorAndRegistryArePermanentlyBound() public {
-        assertEq(address(executor.registry()), address(registry));
-        assertEq(registry.executor(), address(executor));
+    /// @dev Admission and execution are one contract, so there is no pointer to keep in sync
+    ///      and no per-account registry selection to get wrong.
+    function test_executorIsItsOwnRegistry() public {
+        assertEq(executor.vaultCount(), 3);
+        assertEq(executor.venue(aaveVault).adapter, address(aaveAdapter));
 
-        // A second executor gets its own registry over the same venue infrastructure.
+        // A second executor is a second, independent venue set over the same infrastructure.
         GrowYieldExecutor other = _deployExecutor(address(this));
-        assertNotEq(address(other.registry()), address(registry));
-        assertEq(other.registry().executor(), address(other));
+        assertEq(other.vaultCount(), 0);
+        assertNotEq(address(other), address(executor));
+    }
+
+    /// @dev The two authorities must be distinct: one key that could both pause and un-pause
+    ///      would collapse the separation the reversible pause depends on.
+    function test_constructor_rejectsGuardianEqualToOwner() public {
+        vm.expectRevert(IGrowYieldAdapterRegistry.Invalid.selector);
+        new GrowYieldExecutor(MAX_LOSS_BPS, address(this), address(this), _mockRegistrars());
+    }
+
+    function test_addVaults_isOwnerOnly() public {
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Ownable.OwnableUnauthorizedAccount.selector, makeAddr("stranger")
+            )
+        );
+        executor.addVaults(_defaultVaults());
+
+        vm.prank(riskGuardian);
+        vm.expectRevert(
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, riskGuardian)
+        );
+        executor.addVaults(_defaultVaults());
     }
 
     /// @dev No account opt-in exists on the executor: admission alone makes a venue usable, and
@@ -372,7 +395,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
             address(aaveAdapter), exitOnlyVault, Protocol.AAVE, false, true
         );
-        registry.addVaults(vaults);
+        executor.addVaults(vaults);
 
         MockUnderlying(exitOnlyVault).mint(account, 1e6);
         vm.prank(account);
@@ -397,7 +420,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
     function test_execute_revertsEmptyBatch() public {
         Operation[] memory ops = new Operation[](0);
         vm.prank(account);
-        vm.expectRevert(IGrowYieldExecutor.EmptyBatch.selector);
+        vm.expectRevert(IGrowYieldAdapterRegistry.EmptyBatch.selector);
         executor.execute(ops);
     }
 
@@ -446,7 +469,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         vm.prank(account);
         vm.expectRevert(IGrowYieldExecutor.VenueNotAllowed.selector);
         executor.execute(ops);
-        assertEq(registry.adapterCodeHash(address(malicious)), bytes32(0));
+        assertEq(executor.adapterCodeHash(address(malicious)), bytes32(0));
         assertEq(underlying.balanceOf(thief), 0);
     }
 
@@ -535,7 +558,7 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
             address(feeAdapter), address(feeToken), Protocol.AAVE, true, true
         );
-        GrowYieldAdapterRegistry(address(feeExecutor.registry())).addVaults(vaults);
+        feeExecutor.addVaults(vaults);
 
         feeToken.mint(account, 1_000e6);
         vm.startPrank(account);

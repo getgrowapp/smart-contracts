@@ -55,7 +55,7 @@ contract DeployTest is Test {
         address adapterAddr = params.vaults[0].adapter;
         address vaultAddr = params.vaults[0].vault;
 
-        (address executor, address policyModule, address[] memory adapters, address registry) =
+        (address executor, address policyModule, address[] memory adapters) =
             deployer.deployStack(params);
 
         // Addresses land exactly where predicted.
@@ -70,11 +70,8 @@ contract DeployTest is Test {
         assertEq(GrowYieldPolicyModule(policyModule).accountPaymaster(address(this)), address(0));
         assertEq(IYieldAdapter(adapters[0]).executor(), executor, "adapter executor");
 
-        // The executor deployed this registry and the two are permanently bound.
-        assertEq(address(GrowYieldExecutor(executor).registry()), registry, "executor registry");
-
-        GrowYieldAdapterRegistry r = GrowYieldAdapterRegistry(registry);
-        assertEq(r.executor(), executor, "registry executor");
+        // Admission and execution are one contract; there is no second address to check.
+        GrowYieldExecutor r = GrowYieldExecutor(executor);
         assertEq(r.vaultCount(), 1, "vault count");
         assertEq(r.vaultAt(0), vaultAddr, "vault order");
         assertEq(r.adapterCodeHash(adapterAddr), adapterAddr.codehash, "adapter code hash");
@@ -88,17 +85,19 @@ contract DeployTest is Test {
         assertTrue(r.vaultProtocol(vaultAddr) == Protocol.AAVE, "vault protocol");
 
         // Ownership is offered, not transferred: governance must accept it.
-        assertEq(r.owner(), address(deployer), "registry owner");
-        assertEq(r.pendingOwner(), governance, "registry pending owner");
-        assertNotEq(r.owner(), CREATE2_FACTORY, "CREATE2 factory owns registry");
+        assertEq(r.owner(), address(deployer), "owner");
+        assertEq(r.pendingOwner(), governance, "pending owner");
+        assertNotEq(r.owner(), CREATE2_FACTORY, "CREATE2 factory owns the stack");
+        // The two authorities must be distinct addresses.
+        assertNotEq(r.riskGuardian(), r.owner(), "guardian separated from owner");
     }
 
     /// @dev After handover only governance admits vaults; the deployer has no path back in
     ///      because CREATE2 cannot reproduce the occupied stack addresses.
     function test_deployStack_deployerCannotAdmitVaultsAfterHandover() public {
         GrowYieldDeployer.StackParams memory params = _params(governance);
-        (address executor,,, address registry) = deployer.deployStack(params);
-        GrowYieldAdapterRegistry r = GrowYieldAdapterRegistry(registry);
+        (address executor,,) = deployer.deployStack(params);
+        GrowYieldExecutor r = GrowYieldExecutor(executor);
 
         vm.prank(governance);
         r.acceptOwnership();

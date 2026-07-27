@@ -29,7 +29,13 @@ import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 /// @title GrowYieldAdapterRegistry
 /// @notice Append-only venue set whose members must be authenticated by deployment-pinned
 ///         protocol registrars.
-/// @dev One adapter serves every venue of its protocol, so this registry — not the adapter — is
+/// @dev Abstract: this is the admission half of `GrowYieldExecutor`, which inherits it. They are
+///      one contract because they were never separable — every operation resolves a venue from
+///      this state on the same call, and an executor pointed at a registry that did not name it
+///      back was a class of misconfiguration that simply cannot be expressed now. `address(this)`
+///      is the executor every admitted adapter must authorize.
+///
+///      One adapter serves every venue of its protocol, so this registry — not the adapter — is
 ///      where a venue becomes usable. `addVaults` is the only writer: an admitted venue's
 ///      adapter, protocol, directions, and `(asset, positionToken)` pair are fixed for the
 ///      registry's lifetime. The supported protocol set and its canonical registrars are
@@ -51,17 +57,12 @@ import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 ///
 ///      Adapters must be direct, non-upgradeable deployments because their runtime code hash is
 ///      pinned on first admission. Once the intended venue set is final the owner may renounce
-///      ownership, making the registry fully immutable.
+///      ownership, freezing the venue set forever.
 ///
-///      This registry is deployed by its executor's constructor and the two are permanently
-///      bound: `executor` here and `registry` there are both immutable, and neither is settable.
-///      Admitting a venue is therefore the single governance decision that makes it usable — the
-///      executor holds no per-account opt-in of its own.
+///      Admitting a venue is the single governance decision that makes it usable: there is no
+///      per-account opt-in on the execution side.
 /// @custom:security-contact security@getgrowapp.co
-contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
-    /// @inheritdoc IGrowYieldAdapterRegistry
-    address public immutable executor;
-
+abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
     /// @notice Aave V3 pool every admitted Aave adapter must supply to.
     address public immutable aavePool;
 
@@ -86,7 +87,8 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
     /// @notice CapyFi Comptroller that must list an admitted caToken market.
     address public immutable capyFiComptroller;
 
-    mapping(address vault => Venue) private _venues;
+    /// @dev Read directly by the inherited execution path; `venue()` is the external view.
+    mapping(address vault => Venue) internal _venues;
 
     mapping(address vault => Protocol) private _protocols;
 
@@ -98,15 +100,10 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
     /// @inheritdoc IGrowYieldAdapterRegistry
     mapping(address adapter => bytes32) public adapterCodeHash;
 
-    /// @param executor_ Executor every admitted adapter must authorize. Deployed only by that
-    ///        executor's own constructor, so it is still mid-construction here and has no
-    ///        runtime code yet; only its address can be checked.
     /// @param owner_ Address authorized to admit venues; should be a Safe or TimelockController.
-    /// @param registrars_ Canonical registrars pinned for this registry's lifetime. A zero
+    /// @param registrars_ Canonical registrars pinned for this contract's lifetime. A zero
     ///        address marks that protocol unsupported here.
-    constructor(address executor_, address owner_, Registrars memory registrars_) Ownable(owner_) {
-        if (executor_ == address(0)) revert Invalid();
-
+    constructor(address owner_, Registrars memory registrars_) Ownable(owner_) {
         // A protocol is either fully pinned or absent. A half-configured protocol would
         // otherwise skip part of its authenticity proof at admission time.
         bool aave = registrars_.aavePool != address(0);
@@ -127,7 +124,6 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
         _requireContractOrUnset(registrars_.eulerEarnFactory);
         _requireContractOrUnset(registrars_.capyFiComptroller);
 
-        executor = executor_;
         aavePool = registrars_.aavePool;
         aaveDataProvider = registrars_.aaveDataProvider;
         morphoVaultFactory = registrars_.morphoVaultFactory;
@@ -146,13 +142,6 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
         for (uint256 i; i < count; ++i) {
             _addVault(vaults[i]);
         }
-    }
-
-    /// @inheritdoc IGrowYieldAdapterRegistry
-    /// @dev Disambiguates `Ownable`'s getter from the interface declaration; the bound executor
-    ///      reads this to decide who may re-enable a paused venue.
-    function owner() public view override(Ownable, IGrowYieldAdapterRegistry) returns (address) {
-        return Ownable.owner();
     }
 
     /// @inheritdoc IGrowYieldAdapterRegistry
@@ -199,7 +188,8 @@ contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterRegistry {
                 || (!config.canDeposit && !config.canRedeem)
         ) revert Invalid();
         if (_venues[vault].adapter != address(0)) revert VaultAlreadyRegistered();
-        if (IYieldAdapter(adapter).executor() != executor) revert Invalid();
+        // The adapter must authorize this very contract; there is no separate executor to name.
+        if (IYieldAdapter(adapter).executor() != address(this)) revert Invalid();
 
         address asset = IYieldAdapter(adapter).asset(vault);
         address position = IYieldAdapter(adapter).positionToken(vault);

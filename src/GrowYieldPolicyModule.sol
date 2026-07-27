@@ -14,7 +14,8 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
-import {IGrowYieldAdapterRegistry} from "./interfaces/IGrowYieldAdapterRegistry.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+
 import {IGrowYieldExecutor} from "./interfaces/IGrowYieldExecutor.sol";
 import {IGrowYieldPolicyModule} from "./interfaces/IGrowYieldPolicyModule.sol";
 import {GrowYieldPolicyLib} from "./GrowYieldPolicyLib.sol";
@@ -300,20 +301,21 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
     /// @dev Pins the single executor whose `execute` batches this account's policy accepts.
     ///
     ///      This address is load-bearing well beyond routing: once set, a policy owner (session
-    ///      key) can sign a batch that approves it for the account's full balance and calls
-    ///      `execute` on it with arbitrary operations. An owner typo here would therefore
-    ///      become a session-key-exploitable drain, so the address must prove it is a Grow
-    ///      executor bound to a registry that names it back — a property no arbitrary contract
-    ///      can fake without deploying the real pair.
+    ///      key) can sign calls to it against the account's standing allowance. An owner typo
+    ///      here would therefore become a session-key-exploitable drain, so the candidate must
+    ///      answer the executor surface coherently — a guardian, an owner, and at least one
+    ///      admitted venue. That is a typo filter, not a trust boundary: the owner is trusted,
+    ///      and an owner determined to approve a hostile contract still can.
     function _setExecutor(address account, address executor) private {
         if (executor.code.length == 0) revert InvalidConfiguration();
 
-        try IGrowYieldExecutor(executor).registry() returns (IGrowYieldAdapterRegistry registry) {
-            // A non-conforming registry reverts loudly here; this is an owner-path call, so
-            // failing the transaction is the right outcome either way.
-            if (address(registry) == address(0) || registry.executor() != executor) {
-                revert InvalidConfiguration();
-            }
+        try IGrowYieldExecutor(executor).vaultCount() returns (uint256 vaults) {
+            // An executor with no admitted venue is unusable, so approving one is always a
+            // mistake worth catching at configuration time.
+            if (
+                vaults == 0 || IGrowYieldExecutor(executor).riskGuardian() == address(0)
+                    || Ownable(executor).owner() == address(0)
+            ) revert InvalidConfiguration();
         } catch {
             revert InvalidConfiguration();
         }

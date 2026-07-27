@@ -44,8 +44,10 @@ struct Operation {
 }
 
 /// @title IGrowYieldExecutor
-/// @notice Routes a caller's own funds through venues admitted by this executor's registry.
-interface IGrowYieldExecutor {
+/// @notice Routes a caller's own funds through venues this same contract has admitted.
+/// @dev Extends the registry interface because they are one contract: `GrowYieldExecutor`
+///      inherits `GrowYieldAdapterRegistry`.
+interface IGrowYieldExecutor is IGrowYieldAdapterRegistry {
     /// @notice Emitted once per successfully executed operation.
     event Executed(
         address indexed account,
@@ -62,20 +64,11 @@ interface IGrowYieldExecutor {
     /// @notice Emitted when the registry owner re-enables a paused venue's deposits.
     event VaultDepositsUnpaused(address indexed vault);
 
-    /// @notice Constructor configuration is invalid.
-    error Invalid();
-
-    /// @notice `execute` received no operations.
-    error EmptyBatch();
-
     /// @notice `execute` received more than `MAX_OPS` operations.
     error BatchTooLarge();
 
     /// @notice The registry has not admitted this venue, or not in this direction.
     error VenueNotAllowed();
-
-    /// @notice The adapter runtime no longer matches its admission-time code hash.
-    error AdapterCodeChanged();
 
     /// @notice The adapter no longer derives the token pair pinned for this venue at admission.
     error VenueDrift();
@@ -119,10 +112,6 @@ interface IGrowYieldExecutor {
     ///      keeps a false-positive pause from being an unrecoverable state.
     /// @param vault Venue whose deposits are re-enabled.
     function unpauseVaultDeposits(address vault) external;
-
-    /// @notice Venue registry this executor deployed and is permanently bound to. Its owner is
-    ///         the governance body for both venue admission and deposit un-pausing.
-    function registry() external view returns (IGrowYieldAdapterRegistry);
 
     /// @notice Maximum accepted shortfall vs. adapter preview, in basis points.
     function maxLossBps() external view returns (uint16);

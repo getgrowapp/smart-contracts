@@ -36,9 +36,11 @@ import {GrowYieldDeployer} from "./GrowYieldDeployer.sol";
 ///      wired to infrastructure the registry does not recognize. Venues are then listed per
 ///      protocol under `.vaults`.
 ///
-///      The registry is deployed owned by the shared deployer, receives the configured venue set
-///      in the same transaction, and is then offered to `.registry.owner`. That governance
-///      address must call `acceptOwnership()` before it can admit further venues.
+///      The executor is also the venue registry. It is deployed owned by the shared deployer,
+///      receives the configured venue set in the same transaction, and is then offered to
+///      `.registry.owner`. That governance address must call `acceptOwnership()` before it can
+///      admit further venues. `.executor.riskGuardian` must be a different address: it may pause
+///      deposits but never un-pause or admit.
 ///
 ///      `VaultCfg` fields are ordered ALPHABETICALLY by JSON key: `vm.parseJson` abi-encodes
 ///      object keys in lexicographic (byte) order, so the struct layout must match or decoding
@@ -111,12 +113,12 @@ contract Deploy is Script {
         _logPlan(env, address(deployer), executorAddr, plan, params.vaults);
 
         vm.startBroadcast();
-        (address executor, address policyModule, address[] memory adapters, address registry) =
+        (address executor, address policyModule, address[] memory adapters) =
             deployer.deployStack(params);
         vm.stopBroadcast();
 
         _validateAuthorities(config, address(deployer), riskGuardian, executor, policyModule);
-        _validateRegistry(registry, executor, address(deployer), params);
+        _validateVenues(executor, address(deployer), params);
 
         // Deployed addresses must equal the pre-broadcast predictions; otherwise the artifact
         // (and any dependent off-chain config) would record the wrong contracts.
@@ -126,7 +128,7 @@ contract Deploy is Script {
             require(IYieldAdapter(adapters[i]).executor() == executor, "wrong adapter executor");
         }
 
-        _writeDeployment(env, address(deployer), executor, policyModule, registry, plan, params);
+        _writeDeployment(env, address(deployer), executor, policyModule, plan, params);
     }
 
     // -------------------------------------------------------------------------
@@ -335,6 +337,11 @@ contract Deploy is Script {
             GrowYieldExecutor(executor).riskGuardian() == expectedRiskGuardian,
             "wrong risk guardian"
         );
+        require(
+            GrowYieldExecutor(executor).riskGuardian()
+                != vm.parseJsonAddress(config, ".registry.owner"),
+            "guardian and owner must differ"
+        );
 
         // The module pins no executor and no paymaster: both are per-account install data.
         GrowYieldPolicyModule policy = GrowYieldPolicyModule(policyModule);
@@ -344,22 +351,17 @@ contract Deploy is Script {
         );
     }
 
-    /// @dev Fail the script unless the registry pins the configured executor, admitted every
-    ///      configured venue, and is offered to the configured governance owner.
-    function _validateRegistry(
-        address registry,
+    /// @dev Fail the script unless the executor admitted every configured venue and is offered
+    ///      to the configured governance owner. Admission and execution are one contract.
+    function _validateVenues(
         address executor,
         address deployer,
         GrowYieldDeployer.StackParams memory params
     ) internal view {
-        GrowYieldAdapterRegistry r = GrowYieldAdapterRegistry(registry);
-        require(r.executor() == executor, "wrong registry executor");
-        require(
-            address(GrowYieldExecutor(executor).registry()) == registry, "executor/registry unbound"
-        );
-        require(r.owner() == deployer, "unexpected registry owner");
-        require(r.pendingOwner() == params.registryOwner, "registry not offered to governance");
-        require(r.vaultCount() == params.vaults.length, "unexpected registry venue count");
+        GrowYieldExecutor r = GrowYieldExecutor(executor);
+        require(r.owner() == deployer, "unexpected owner");
+        require(r.pendingOwner() == params.registryOwner, "not offered to governance");
+        require(r.vaultCount() == params.vaults.length, "unexpected venue count");
 
         for (uint256 i; i < params.vaults.length; ++i) {
             IGrowYieldAdapterRegistry.VaultConfig memory expected = params.vaults[i];
@@ -444,7 +446,6 @@ contract Deploy is Script {
         address deployer,
         address executor,
         address policyModule,
-        address registry,
         AdapterPlan memory plan,
         GrowYieldDeployer.StackParams memory params
     ) internal {
@@ -474,10 +475,9 @@ contract Deploy is Script {
         vm.serializeAddress(root, "deployer", deployer);
         vm.serializeAddress(root, "executor", executor);
         vm.serializeAddress(root, "policyModule", policyModule);
-        vm.serializeAddress(root, "registry", registry);
-        vm.serializeAddress(
-            root, "registryPendingOwner", GrowYieldAdapterRegistry(registry).pendingOwner()
-        );
+        // The executor is the venue registry; one address, one owner.
+        vm.serializeAddress(root, "owner", GrowYieldExecutor(executor).owner());
+        vm.serializeAddress(root, "pendingOwner", GrowYieldExecutor(executor).pendingOwner());
         vm.serializeString(root, "adapterKinds", adapterKinds);
         vm.serializeAddress(root, "adapterAddresses", plan.addrs);
         vm.serializeString(root, "vaultKinds", vaultKinds);

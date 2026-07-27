@@ -36,6 +36,7 @@ struct Venue {
 
 /// @title IGrowYieldAdapterRegistry
 /// @notice Append-only directional permissions for factory-authenticated venues.
+/// @dev Implemented by `GrowYieldExecutor` itself — admission and execution are one contract.
 interface IGrowYieldAdapterRegistry {
     /// @notice Canonical protocol registrars pinned for this registry's lifetime.
     /// @dev A zero address marks the protocol unsupported by this registry; `addVaults`
@@ -90,7 +91,7 @@ interface IGrowYieldAdapterRegistry {
     /// @notice The executor, registrar, adapter, or venue configuration is invalid.
     error Invalid();
 
-    /// @notice `addVaults` received no entries.
+    /// @notice `addVaults` or `execute` received no entries.
     error EmptyBatch();
 
     /// @notice This registry pins no registrar for the declared protocol.
@@ -109,14 +110,8 @@ interface IGrowYieldAdapterRegistry {
     error DuplicateVenue();
 
     /// @notice The adapter's runtime code no longer matches the hash pinned on first admission.
+    ///         Checked at admission and again on every operation.
     error AdapterCodeChanged();
-
-    /// @notice Executor every admitted adapter must authorize.
-    function executor() external view returns (address);
-
-    /// @notice Governance address for this registry. It admits venues, and the bound executor
-    ///         treats it as the authority allowed to re-enable a paused venue's deposits.
-    function owner() external view returns (address);
 
     /// @notice Admit venues authenticated by this registry's pinned registrars.
     /// @dev Append-only: an admitted venue's adapter, directions, and token pair are never

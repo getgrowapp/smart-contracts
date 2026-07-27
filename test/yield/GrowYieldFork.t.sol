@@ -28,7 +28,6 @@ contract GrowYieldForkTest is Test {
     address internal constant AAVE_ADDRESSES_PROVIDER = 0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D;
     address internal constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
 
-    GrowYieldAdapterRegistry internal registry;
     GrowYieldExecutor internal executor;
     AaveV3Adapter internal adapter;
 
@@ -61,7 +60,6 @@ contract GrowYieldForkTest is Test {
                 capyFiComptroller: address(0)
             })
         );
-        registry = GrowYieldAdapterRegistry(address(executor.registry()));
 
         adapter = new AaveV3Adapter(
             IAaveV3Pool(provider.getPool()),
@@ -73,7 +71,7 @@ contract GrowYieldForkTest is Test {
         vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
             address(adapter), USDC, Protocol.AAVE, true, true
         );
-        registry.addVaults(vaults);
+        executor.addVaults(vaults);
     }
 
     function test_fork_depositAndRedeem_realAaveUsdc() public {
@@ -165,7 +163,7 @@ contract GrowYieldForkTest is Test {
     }
 
     function test_fork_registryRemainsFixed() public view {
-        assertTrue(registry.canDeposit(USDC));
-        assertEq(registry.adapterCodeHash(address(adapter)), address(adapter).codehash);
+        assertTrue(executor.canDeposit(USDC));
+        assertEq(executor.adapterCodeHash(address(adapter)), address(adapter).codehash);
     }
 }

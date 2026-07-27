@@ -38,6 +38,9 @@ library GrowYieldPolicyLib {
     ///      Bounding the length is how the batch size is capped here, instead of decoding the
     ///      operations only to count them. Any larger request is rejected before it is hashed.
     uint256 private constant MAX_INNER_LENGTH = 68 + 192 * MAX_OPS;
+    // Round the inner payload up to a whole word; dividing first is the rounding, not a
+    // precision loss.
+    // forge-lint: disable-next-line(divide-before-multiply)
     uint256 private constant MAX_CALLDATA_LENGTH = 132 + ((MAX_INNER_LENGTH + 31) / 32) * 32;
 
     /// @notice True if `callData` is the canonical single executor call for `account`.
