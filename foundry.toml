@@ -24,6 +24,7 @@ remappings = [
   "@account-abstraction/contracts/=lib/account-abstraction/contracts/",
   "account-abstraction/=lib/account-abstraction/contracts/",
   "@alchemy/modular-account/=lib/modular-account-v2/src/",
+  "@alchemy/msca/=lib/modular-account-v2/lib/light-account/lib/modular-account/src/",
   "solady/=lib/solady-v00237/src/",
 ]
 

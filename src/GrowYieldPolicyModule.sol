@@ -205,6 +205,11 @@ contract GrowYieldPolicyModule is IGrowYieldPolicyModule, BaseModule, EIP712 {
         return _packValidationData(!valid, 0, 0);
     }
 
+    /// @notice EIP-712 digest policy owners sign for yield UserOperations (MSCA plugin verifies via this).
+    function authorizationDigest(bytes32 userOpHash) external view returns (bytes32) {
+        return _hashTypedDataV4(keccak256(abi.encode(AUTHORIZATION_TYPEHASH, userOpHash)));
+    }
+
     /// @notice Return whether calldata satisfies the canonical yield policy.
     /// @dev Externalized so malformed ABI can be contained without reverting validation.
     function isAllowedCallData(address account, bytes calldata callData)
