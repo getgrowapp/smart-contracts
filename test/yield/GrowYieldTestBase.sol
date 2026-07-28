@@ -16,7 +16,7 @@ import {
     IMorphoVaultV1AdapterFactory
 } from "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
 
-import {GrowYieldPolicyModule} from "../../src/GrowYieldPolicyModule.sol";
+import {GrowYieldPlugin} from "../../src/GrowYieldPlugin.sol";
 import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
 import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
 import {AaveV3Adapter} from "../../src/adapters/AaveV3Adapter.sol";
@@ -63,7 +63,7 @@ abstract contract GrowYieldTestBase is Test {
     uint32 internal constant POLICY_ENTITY_ID = 1;
 
     GrowYieldExecutor internal executor;
-    GrowYieldPolicyModule internal policyModule;
+    GrowYieldPlugin internal policyModule;
     address internal sponsorPaymaster;
     address internal riskGuardian;
 
@@ -126,7 +126,7 @@ abstract contract GrowYieldTestBase is Test {
         _deployAdapters();
         executor.addVaults(_defaultVaults());
 
-        policyModule = new GrowYieldPolicyModule(
+        policyModule = new GrowYieldPlugin(
             MAX_VERIFICATION_GAS,
             MAX_CALL_GAS,
             MAX_PRE_VERIFICATION_GAS,

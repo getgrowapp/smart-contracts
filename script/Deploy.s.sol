@@ -6,7 +6,7 @@ import {VmSafe} from "forge-std/Vm.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {GrowYieldExecutor} from "../src/GrowYieldExecutor.sol";
-import {GrowYieldPolicyModule} from "../src/GrowYieldPolicyModule.sol";
+import {GrowYieldPlugin} from "../src/GrowYieldPlugin.sol";
 import {AaveV3Adapter} from "../src/adapters/AaveV3Adapter.sol";
 import {CapyFiAdapter} from "../src/adapters/CapyFiAdapter.sol";
 import {EulerEarnAdapter} from "../src/adapters/EulerEarnAdapter.sol";
@@ -156,7 +156,7 @@ contract Deploy is Script {
 
     function _policyInit(string memory config) internal pure returns (bytes memory) {
         return abi.encodePacked(
-            type(GrowYieldPolicyModule).creationCode,
+            type(GrowYieldPlugin).creationCode,
             abi.encode(
                 vm.parseJsonUint(config, ".policyModule.maxVerificationGas").toUint128(),
                 vm.parseJsonUint(config, ".policyModule.maxCallGas").toUint128(),
@@ -343,7 +343,7 @@ contract Deploy is Script {
         );
 
         // The module pins no executor and no paymaster: both are per-account install data.
-        GrowYieldPolicyModule policy = GrowYieldPolicyModule(policyModule);
+        GrowYieldPlugin policy = GrowYieldPlugin(policyModule);
         require(
             policy.maxCallGas() == vm.parseJsonUint(config, ".policyModule.maxCallGas").toUint128(),
             "wrong policy call-gas ceiling"

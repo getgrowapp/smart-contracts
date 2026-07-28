@@ -10,7 +10,7 @@ import {Deploy} from "../../script/Deploy.s.sol";
 import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
 import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
 import {AaveV3Adapter} from "../../src/adapters/AaveV3Adapter.sol";
-import {GrowYieldPolicyModule} from "../../src/GrowYieldPolicyModule.sol";
+import {GrowYieldPlugin} from "../../src/GrowYieldPlugin.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {
@@ -66,8 +66,8 @@ contract DeployTest is Test {
         // Every component pinned the same executor, which itself is ownerless.
         assertEq(GrowYieldExecutor(executor).riskGuardian(), RISK_GUARDIAN, "risk guardian");
         // The module pins neither executor nor paymaster: both are per-account install data.
-        assertEq(GrowYieldPolicyModule(policyModule).accountExecutor(address(this)), address(0));
-        assertEq(GrowYieldPolicyModule(policyModule).accountPaymaster(address(this)), address(0));
+        assertEq(GrowYieldPlugin(policyModule).accountExecutor(address(this)), address(0));
+        assertEq(GrowYieldPlugin(policyModule).accountPaymaster(address(this)), address(0));
         assertEq(IYieldAdapter(adapters[0]).executor(), executor, "adapter executor");
 
         // Admission and execution are one contract; there is no second address to check.
@@ -180,7 +180,7 @@ contract DeployTest is Test {
 
         params.policySalt = POLICY_SALT;
         params.policyInit = abi.encodePacked(
-            type(GrowYieldPolicyModule).creationCode,
+            type(GrowYieldPlugin).creationCode,
             abi.encode(
                 uint128(500_000),
                 uint128(2_000_000),

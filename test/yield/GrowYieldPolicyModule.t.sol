@@ -11,7 +11,8 @@ import {
 
 import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
 import {IGrowYieldPolicyModule} from "../../src/interfaces/IGrowYieldPolicyModule.sol";
-import {BaseModule} from "@erc6900/reference-implementation/modules/BaseModule.sol";
+import {GrowYieldPlugin} from "../../src/GrowYieldPlugin.sol";
+import {BasePlugin} from "@alchemy/msca/plugins/BasePlugin.sol";
 import {
     IGrowYieldExecutor,
     MAX_OPS,
@@ -477,7 +478,11 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
     }
 
     function test_runtimeAnd1271PathsAreDisabled() public {
-        vm.expectRevert(BaseModule.NotImplemented.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BasePlugin.NotImplemented.selector, GrowYieldPlugin.validateRuntime.selector, uint8(0)
+            )
+        );
         policyModule.validateRuntime(account, 0, automation, 0, "", "");
         assertEq(
             policyModule.validateSignature(account, 0, automation, bytes32(0), ""),

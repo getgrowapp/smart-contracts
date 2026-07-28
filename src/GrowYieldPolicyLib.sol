@@ -46,12 +46,46 @@ library GrowYieldPolicyLib {
         (address target, uint256 value, bytes memory data) =
             abi.decode(callData[4:], (address, uint256, bytes));
 
-        return target == executor && value == 0 && data.length >= 4
-            // Truncation is the intent: the leading four bytes are the selector, and
-            // `data.length >= 4` above guarantees they exist.
-            // forge-lint: disable-next-line(unsafe-typecast)
-            && bytes4(data) == IGrowYieldExecutor.execute.selector
+        return target == executor && value == 0 && isAllowedExecutorPayloadMemory(data)
             && keccak256(callData)
                 == keccak256(abi.encodeCall(IModularAccount.execute, (target, value, data)));
+    }
+
+    function isAllowedMemory(address executor, bytes memory callData) internal pure returns (bool) {
+        if (
+            callData.length < 4 || callData.length > MAX_CALLDATA_LENGTH
+                || bytes4(_loadSelector(callData)) != IModularAccount.execute.selector
+        ) return false;
+
+        (address target, uint256 value, bytes memory data) =
+            abi.decode(_trimSelector(callData), (address, uint256, bytes));
+
+        return target == executor && value == 0 && isAllowedExecutorPayloadMemory(data)
+            && keccak256(callData)
+                == keccak256(abi.encodeCall(IModularAccount.execute, (target, value, data)));
+    }
+
+    /// @dev Inner `executor.execute(ops)` payload for MSCA `executeGrowYield` UserOps.
+    function isAllowedExecutorPayload(bytes calldata data) internal pure returns (bool) {
+        return data.length >= 4 && data.length <= MAX_INNER_LENGTH
+            && bytes4(data[:4]) == IGrowYieldExecutor.execute.selector;
+    }
+
+    function isAllowedExecutorPayloadMemory(bytes memory data) internal pure returns (bool) {
+        return data.length >= 4 && data.length <= MAX_INNER_LENGTH
+            && bytes4(_loadSelector(data)) == IGrowYieldExecutor.execute.selector;
+    }
+
+    function _loadSelector(bytes memory data) private pure returns (bytes4 selector) {
+        assembly {
+            selector := mload(add(data, 32))
+        }
+    }
+
+    function _trimSelector(bytes memory callData) private pure returns (bytes memory trimmed) {
+        assembly {
+            trimmed := add(callData, 4)
+            mstore(trimmed, sub(mload(callData), 4))
+        }
     }
 }
