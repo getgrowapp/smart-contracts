@@ -1,5 +1,18 @@
 # Change log
 
+> **Latest — MSCA ephemeral allowance (`grow.yield-policy.7.0.0`).**
+>
+> - **`GrowYieldPluginEphemeralLib`** — per-batch `approve(max) → executor.execute(ops) → approve(0)`
+>   via `executeGrowYieldWithEphemeralAllowance`. No standing ERC-20 allowance remains after the
+>   UserOp; the executor only pulls from `msg.sender` during execution.
+> - **Policy validation unchanged in spirit** — `GrowYieldPolicyLib` still accepts only
+>   `account.execute(executor, 0, executor.execute(ops))`; the plugin maps the ephemeral selector
+>   to that canonical inner payload before `isAllowedCallData` runs.
+> - **Module id** — `grow.yield-policy.7.0.0` (v5 unified plugin without ephemeral path is legacy).
+> - **Production Base (Jul 2026)** — MSCA plugin `0x415609d5316b2D978E8c9EaC30e0Cad754314A5a`,
+>   executor `0xEfD0e3d9f5E9fB5428dD9dd271B85247384A8cD0`.
+> - **Tests** — `GrowYieldPluginEphemeral.t.sol`, `GrowYieldManifestHash.t.sol`.
+
 > **Latest — one contract.** `GrowYieldExecutor` now inherits `GrowYieldAdapterRegistry`
 > (abstract); admission and execution are a single deployment. Removed: the executor's
 > `registry` immutable, the registry's `executor` immutable, the constructor-deploys-registry

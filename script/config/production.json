@@ -1,10 +1,10 @@
 {
   "executor": {
     "maxLossBps": 50,
-    "riskGuardian": "0xe8D212F886109cbf01e8294E3640a6Fb05544ff3"
+    "riskGuardian": "0x91E633eBF851800D5b1553E99398AffD8d942B2d"
   },
   "registry": {
-    "owner": "0x4444444444444444444444444444444444444444",
+    "owner": "0xe8D212F886109cbf01e8294E3640a6Fb05544ff3",
     "registrars": {
       "aavePool": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
       "aaveDataProvider": "0x0F43731EB8d45A581f4a36DD74F5f358bc90C73A",
@@ -47,6 +47,11 @@
     "morpho": [
       {
         "vault": "0xa157a87D41ef25d033082180858DB0813ad61d39",
+        "canDeposit": true,
+        "canRedeem": true
+      },
+      {
+        "vault": "0xCaF1B7B0A5Cc27bb23B6033127D5197013Bde4D3",
         "canDeposit": true,
         "canRedeem": true
       }

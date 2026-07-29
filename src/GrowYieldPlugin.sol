@@ -27,8 +27,9 @@ import {IStandardExecutor} from "@alchemy/msca/interfaces/IStandardExecutor.sol"
 import {SIG_VALIDATION_PASSED, SIG_VALIDATION_FAILED} from "@alchemy/msca/libraries/Constants.sol";
 import {BasePlugin} from "@alchemy/msca/plugins/BasePlugin.sol";
 
-import {IGrowYieldExecutor} from "./interfaces/IGrowYieldExecutor.sol";
+import {IGrowYieldExecutor, Operation} from "./interfaces/IGrowYieldExecutor.sol";
 import {IGrowYieldPolicyModule} from "./interfaces/IGrowYieldPolicyModule.sol";
+import {GrowYieldPluginEphemeralLib} from "./GrowYieldPluginEphemeralLib.sol";
 import {GrowYieldPolicyLib} from "./GrowYieldPolicyLib.sol";
 
 /// @title GrowYieldPlugin
@@ -91,6 +92,14 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
 
     function executeGrowYield(address executor, bytes calldata executorCallData) external returns (bytes memory) {
         return IPluginExecutor(msg.sender).executeFromPluginExternal(executor, 0, executorCallData);
+    }
+
+    /// @notice Approve the executor per unique `sourceToken`, run `executor.execute(ops)`, then revoke.
+    function executeGrowYieldWithEphemeralAllowance(address executor, Operation[] calldata ops)
+        external
+        returns (bytes memory)
+    {
+        return GrowYieldPluginEphemeralLib.executeWithEphemeralAllowance(executor, ops);
     }
 
     function addOwner(address owner) external {
@@ -244,7 +253,7 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
     }
 
     function moduleId() external pure returns (string memory) {
-        return "grow.yield-policy.5.0.0";
+        return "grow.yield-policy.7.0.0";
     }
 
     function userOpValidationFunction(uint8 functionId, UserOperation calldata userOp, bytes32 userOpHash)
@@ -280,28 +289,39 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         manifest.dependencyInterfaceIds[0] = type(IPlugin).interfaceId;
         manifest.dependencyInterfaceIds[1] = type(IPlugin).interfaceId;
 
-        manifest.executionFunctions = new bytes4[](1);
+        manifest.executionFunctions = new bytes4[](2);
         manifest.executionFunctions[0] = GrowYieldPlugin.executeGrowYield.selector;
+        manifest.executionFunctions[1] = GrowYieldPlugin.executeGrowYieldWithEphemeralAllowance.selector;
 
         ManifestFunction memory policyValidation = ManifestFunction({
             functionType: ManifestAssociatedFunctionType.SELF,
             functionId: 0,
             dependencyIndex: 0
         });
-        manifest.userOpValidationFunctions = new ManifestAssociatedFunction[](1);
+        ManifestFunction memory denyRuntime = ManifestFunction({
+            functionType: ManifestAssociatedFunctionType.PRE_HOOK_ALWAYS_DENY,
+            functionId: 0,
+            dependencyIndex: 0
+        });
+
+        manifest.userOpValidationFunctions = new ManifestAssociatedFunction[](2);
         manifest.userOpValidationFunctions[0] = ManifestAssociatedFunction({
             executionSelector: GrowYieldPlugin.executeGrowYield.selector,
             associatedFunction: policyValidation
         });
+        manifest.userOpValidationFunctions[1] = ManifestAssociatedFunction({
+            executionSelector: GrowYieldPlugin.executeGrowYieldWithEphemeralAllowance.selector,
+            associatedFunction: policyValidation
+        });
 
-        manifest.preRuntimeValidationHooks = new ManifestAssociatedFunction[](1);
+        manifest.preRuntimeValidationHooks = new ManifestAssociatedFunction[](2);
         manifest.preRuntimeValidationHooks[0] = ManifestAssociatedFunction({
             executionSelector: GrowYieldPlugin.executeGrowYield.selector,
-            associatedFunction: ManifestFunction({
-                functionType: ManifestAssociatedFunctionType.PRE_HOOK_ALWAYS_DENY,
-                functionId: 0,
-                dependencyIndex: 0
-            })
+            associatedFunction: denyRuntime
+        });
+        manifest.preRuntimeValidationHooks[1] = ManifestAssociatedFunction({
+            executionSelector: GrowYieldPlugin.executeGrowYieldWithEphemeralAllowance.selector,
+            associatedFunction: denyRuntime
         });
 
         manifest.permitAnyExternalAddress = true;
@@ -419,13 +439,31 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
                 || address(bytes20(paymasterAndData[:20])) != _accountConfigs[account].paymaster
         ) return false;
 
+        // Alchemy Gas Manager appends validUntil + signature after the paymaster address.
+        // Bytes [20:52) are not verification/postOp gas limits in that encoding.
+        if (paymasterAndData.length > PAYMASTER_STATIC_FIELDS_LENGTH) return true;
+
         return uint128(bytes16(paymasterAndData[20:36])) <= maxPaymasterVerificationGas
             && uint128(bytes16(paymasterAndData[36:52])) <= maxPaymasterPostOpGas;
     }
 
     function _pluginCallAllowed(address account, bytes calldata callData) private view returns (bool) {
-        if (callData.length < 4 || bytes4(callData[:4]) != this.executeGrowYield.selector) return false;
-        (address executor, bytes memory inner) = abi.decode(callData[4:], (address, bytes));
+        if (callData.length < 4) return false;
+
+        bytes4 selector = bytes4(callData[:4]);
+        address executor;
+        bytes memory inner;
+
+        if (selector == this.executeGrowYield.selector) {
+            (executor, inner) = abi.decode(callData[4:], (address, bytes));
+        } else if (selector == this.executeGrowYieldWithEphemeralAllowance.selector) {
+            Operation[] memory ops;
+            (executor, ops) = abi.decode(callData[4:], (address, Operation[]));
+            inner = abi.encodeCall(IGrowYieldExecutor.execute, (ops));
+        } else {
+            return false;
+        }
+
         bytes memory executeCallData =
             abi.encodeCall(IStandardExecutor.execute, (executor, uint256(0), inner));
         try this.isAllowedCallData(account, executeCallData) returns (bool allowed) {
@@ -436,10 +474,6 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
     }
 
     function _mscaPaymasterAllowed(address account, bytes calldata paymasterAndData) private view returns (bool) {
-        address paymaster = _accountConfigs[account].paymaster;
-        if (paymaster == address(0) || paymasterAndData.length < PAYMASTER_STATIC_FIELDS_LENGTH) return false;
-        if (address(bytes20(paymasterAndData[:20])) != paymaster) return false;
-        return uint128(bytes16(paymasterAndData[20:36])) <= maxPaymasterVerificationGas
-            && uint128(bytes16(paymasterAndData[36:52])) <= maxPaymasterPostOpGas;
+        return _paymasterPolicyAllows(account, paymasterAndData);
     }
 }

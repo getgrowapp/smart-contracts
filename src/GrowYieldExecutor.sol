@@ -18,6 +18,10 @@ import {
 } from "./interfaces/IGrowYieldExecutor.sol";
 import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 
+interface IAccountExecute {
+    function execute(address target, uint256 value, bytes calldata data) external returns (bytes memory);
+}
+
 /// @title GrowYieldExecutor
 /// @notice Routes a caller's own funds through venues this same contract has admitted.
 /// @dev Admission and execution are one contract: this *is* the venue registry, inheriting
@@ -124,6 +128,27 @@ contract GrowYieldExecutor is
         nonReentrant
         returns (uint256[] memory received)
     {
+        return _executeOps(ops);
+    }
+
+    /// @inheritdoc IGrowYieldExecutor
+    function executeWithEphemeralAllowance(Operation[] calldata ops)
+        external
+        nonReentrant
+        returns (uint256[] memory received)
+    {
+        address account = msg.sender;
+        uint256 count = ops.length;
+        for (uint256 i; i < count; ++i) {
+            _ephemeralAllowance(account, ops[i].sourceToken, type(uint256).max);
+        }
+        received = _executeOps(ops);
+        for (uint256 i; i < count; ++i) {
+            _ephemeralAllowance(account, ops[i].sourceToken, 0);
+        }
+    }
+
+    function _executeOps(Operation[] calldata ops) private returns (uint256[] memory received) {
         uint256 count = ops.length;
         if (count == 0) revert EmptyBatch();
         if (count > MAX_OPS) revert BatchTooLarge();
@@ -136,6 +161,12 @@ contract GrowYieldExecutor is
                 _run(ops[i], previousOutputToken, previousOutputAmount, i != 0);
             previousOutputAmount = received[i];
         }
+    }
+
+    function _ephemeralAllowance(address account, address token, uint256 amount) private {
+        bytes memory data =
+            abi.encodeWithSelector(IERC20.approve.selector, address(this), amount);
+        IAccountExecute(account).execute(token, 0, data);
     }
 
     /// @dev Validates, funds, and executes one operation; enforces the output floor.

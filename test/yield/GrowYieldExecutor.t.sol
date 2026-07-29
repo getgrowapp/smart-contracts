@@ -833,6 +833,22 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         assertEq(underlying.balanceOf(account), 100e6);
     }
 
+    function test_executeWithEphemeralAllowance_depositWithoutStandingAllowance() public {
+        MockAccountExec wallet = new MockAccountExec();
+        underlying.mint(address(wallet), 400e6);
+
+        vm.startPrank(address(wallet));
+        uint256[] memory out = executor.executeWithEphemeralAllowance(
+            _ops1(_op(aaveVault, OperationKind.DEPOSIT, 400e6))
+        );
+        vm.stopPrank();
+
+        assertEq(out[0], 400e6);
+        assertEq(underlying.allowance(address(wallet), address(executor)), 0);
+        assertEq(aavePool.aToken().balanceOf(address(wallet)), 400e6);
+        _assertNoResiduals();
+    }
+
     // --- helpers ---
 
     function _seedAave(uint256 amount) internal {
@@ -851,5 +867,22 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
         assertEq(aavePool.aToken().balanceOf(address(aaveAdapter)), 0);
         assertEq(morphoWrapper.balanceOf(address(executor)), 0);
         assertEq(morphoWrapper.balanceOf(address(morphoAdapter)), 0);
+    }
+}
+
+/// @dev Minimal smart-account `execute` forwarder for ephemeral-allowance tests.
+contract MockAccountExec {
+    function execute(address target, uint256 value, bytes calldata data)
+        external
+        payable
+        returns (bytes memory result)
+    {
+        (bool ok, bytes memory ret) = target.call{value: value}(data);
+        if (!ok) {
+            assembly {
+                revert(add(ret, 32), mload(ret))
+            }
+        }
+        return ret;
     }
 }

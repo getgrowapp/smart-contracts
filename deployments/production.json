@@ -1,24 +1,10 @@
 {
   "adapterAddresses": [
-    "0x47f181316C96ee9045c7f5eFfACa47C23658478a",
-    "0xC100691d7a8421477bE09CCC0F4d185144E2d085",
-    "0x21490160229E4d9586cfF8D9537b6fCbB4FF4Af0",
-    "0xbBa5E40133Df5Bdf89C01c5794ec24bDc5B96Cc8",
-    "0x9A918b6B3BF86Da156B1CD1571e4cab4CDbdbc1b"
-  ],
-  "adapterCanDeposit": [
-    true,
-    true,
-    true,
-    true,
-    true
-  ],
-  "adapterCanRedeem": [
-    true,
-    true,
-    true,
-    true,
-    true
+    "0x0b95F0c4d6c9EcA14A6A93C64E09567E7c195575",
+    "0xCfb48099BF487098855f6aB28b9E401F62800Af8",
+    "0xF118807F008dAf5b1a96e70f1Eb78b45EB40A45F",
+    "0x9C6011ae59aB87A10eDFc3284f2dEF19111F8aC1",
+    "0x644624dCC40Ea458C11a6aD4F8A4185CF93910B9"
   ],
   "adapterKinds": [
     "aave",
@@ -28,10 +14,46 @@
     "capyfi"
   ],
   "chainId": 8453,
-  "commitSha": "21dbf5640762bbde7fc07abceef6488c970e44cc",
-  "deployer": "0x088Da052247C69B52482179a56B3a96398D3139c",
-  "executor": "0xA25156b33dF41D2199671625Bf2314e0A1a31b9D",
-  "policyModule": "0x49246E8e7C0F0479Dd208039290FDb21B94E8429",
-  "registry": "0xC797FDb0241f078a58A37999f7B790dC2D1C951e",
-  "timestamp": 1784682119
+  "commitSha": "9f6ad6f8256c5fa72869648c4a49261066ccde59",
+  "deployer": "0xe7F550Af3Ec1f29BE257e5Fe93C7bD43707D6bc0",
+  "executor": "0xEfD0e3d9f5E9fB5428dD9dd271B85247384A8cD0",
+  "owner": "0xe7F550Af3Ec1f29BE257e5Fe93C7bD43707D6bc0",
+  "pendingOwner": "0xe8D212F886109cbf01e8294E3640a6Fb05544ff3",
+  "policyModule": "0xD0ef630787F9962c3B35dc237DE406F7637f2eAb",
+  "timestamp": 1785272831,
+  "vaultAdapters": [
+    "0x0b95F0c4d6c9EcA14A6A93C64E09567E7c195575",
+    "0xCfb48099BF487098855f6aB28b9E401F62800Af8",
+    "0xF118807F008dAf5b1a96e70f1Eb78b45EB40A45F",
+    "0x9C6011ae59aB87A10eDFc3284f2dEF19111F8aC1",
+    "0x644624dCC40Ea458C11a6aD4F8A4185CF93910B9"
+  ],
+  "vaultAddresses": [
+    "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "0xa157a87D41ef25d033082180858DB0813ad61d39",
+    "0x0A1a3b5f2041F33522C4efc754a7D096f880eE16",
+    "0x347005f3C98c3cDEf1B6c6a876608C8a19F88083",
+    "0x5aDb71adb317CE975A405e90335068F0aF9F26C7"
+  ],
+  "vaultCanDeposit": [
+    true,
+    true,
+    true,
+    true,
+    true
+  ],
+  "vaultCanRedeem": [
+    true,
+    true,
+    true,
+    true,
+    true
+  ],
+  "vaultKinds": [
+    "aave",
+    "morpho",
+    "eulerEVault",
+    "eulerEarn",
+    "capyfi"
+  ]
 }

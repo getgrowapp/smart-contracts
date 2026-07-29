@@ -53,6 +53,7 @@ forge script script/DeployMscaPlugin.s.sol \
 NEW_PLUGIN=$(node -e "console.log(require('./deployments/production-msca.json').mscaPlugin)")
 echo ""
 echo "Update grow-backend:"
-echo "  1. Set grow_yield_msca_plugin_address = $NEW_PLUGIN (DB + constants)"
+echo "  1. Set grow_yield_module_address AND grow_yield_msca_plugin_address = $NEW_PLUGIN (DB + constants)"
 echo "  2. npm run generate:constants (grow-backend)"
-echo "  3. Re-run smoke — it will uninstall the old plugin and reinstall $NEW_PLUGIN"
+echo "  3. Run migrations/unify_base_grow_yield_plugin_*.sql on production DB"
+echo "  4. Re-run client-requirements install (repair) for affected wallets"
