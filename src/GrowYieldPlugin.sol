@@ -276,7 +276,7 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
                 || userOp.preVerificationGas > maxPreVerificationGas
                 || userOp.maxPriorityFeePerGas > maxPriorityFeePerGas
                 || userOp.maxFeePerGas > maxFeePerGas
-                || !_mscaPaymasterAllowed(account, userOp.paymasterAndData)
+                || !_paymasterPolicyAllows(account, userOp.paymasterAndData)
                 || !_pluginCallAllowed(account, userOp.callData)
         ) return SIG_VALIDATION_FAILED;
 
@@ -344,27 +344,6 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
     {
         return interfaceId == type(IValidationModule).interfaceId
             || super.supportsInterface(interfaceId);
-    }
-
-    function _onInstall(bytes calldata data) internal override isNotInitialized(msg.sender) {
-        if (_accountConfigs[msg.sender].entityId != 0) revert PolicyAlreadyInstalled();
-
-        (uint32 entityId, address[] memory initialOwners, address executor, address paymaster) =
-            abi.decode(data, (uint32, address[], address, address));
-        if (entityId == 0 || initialOwners.length == 0 || initialOwners.length > MAX_OWNERS) {
-            revert InvalidConfiguration();
-        }
-
-        _accountConfigs[msg.sender].entityId = entityId;
-        for (uint256 i; i < initialOwners.length; ++i) {
-            _addOwner(msg.sender, initialOwners[i]);
-        }
-        _setExecutor(msg.sender, executor);
-        _setPaymaster(msg.sender, paymaster);
-    }
-
-    function _isInitialized(address account) internal view override returns (bool) {
-        return _accountConfigs[account].entityId != 0;
     }
 
     function _addOwner(address account, address owner) private {
@@ -488,13 +467,5 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         } catch {
             return false;
         }
-    }
-
-    function _mscaPaymasterAllowed(address account, bytes calldata paymasterAndData)
-        private
-        view
-        returns (bool)
-    {
-        return _paymasterPolicyAllows(account, paymasterAndData);
     }
 }
