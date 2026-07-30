@@ -90,7 +90,11 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         maxFeePerGas = maxFeePerGas_;
     }
 
-    function executeGrowYield(address executor, bytes calldata executorCallData) external returns (bytes memory) {
+    function executeGrowYield(address executor, bytes calldata executorCallData)
+        external
+        returns (bytes memory)
+    {
+        _requireApprovedExecutor(executor);
         return IPluginExecutor(msg.sender).executeFromPluginExternal(executor, 0, executorCallData);
     }
 
@@ -99,6 +103,7 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         external
         returns (bytes memory)
     {
+        _requireApprovedExecutor(executor);
         return GrowYieldPluginEphemeralLib.executeWithEphemeralAllowance(executor, ops);
     }
 
@@ -256,29 +261,28 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         return "grow.yield-policy.7.0.0";
     }
 
-    function userOpValidationFunction(uint8 functionId, UserOperation calldata userOp, bytes32 userOpHash)
-        external
-        view
-        override
-        returns (uint256)
-    {
+    function userOpValidationFunction(
+        uint8 functionId,
+        UserOperation calldata userOp,
+        bytes32 userOpHash
+    ) external view override returns (uint256) {
         if (functionId != 0) revert NotImplemented(msg.sig, functionId);
 
         address account = msg.sender;
         if (
             _accountConfigs[account].entityId == 0 || userOp.signature.length != SIGNATURE_LENGTH
-                || userOp.initCode.length != 0
-                || userOp.verificationGasLimit > maxVerificationGas
+                || userOp.initCode.length != 0 || userOp.verificationGasLimit > maxVerificationGas
                 || userOp.callGasLimit > maxCallGas
                 || userOp.preVerificationGas > maxPreVerificationGas
                 || userOp.maxPriorityFeePerGas > maxPriorityFeePerGas
                 || userOp.maxFeePerGas > maxFeePerGas
-                || !_mscaPaymasterAllowed(account, userOp.paymasterAndData)
+                || !_paymasterPolicyAllows(account, userOp.paymasterAndData)
                 || !_pluginCallAllowed(account, userOp.callData)
         ) return SIG_VALIDATION_FAILED;
 
         bytes32 digest = this.authorizationDigest(userOpHash);
-        (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecoverCalldata(digest, userOp.signature);
+        (address recovered, ECDSA.RecoverError err,) =
+            ECDSA.tryRecoverCalldata(digest, userOp.signature);
         return err == ECDSA.RecoverError.NoError && isOwner(account, recovered)
             ? SIG_VALIDATION_PASSED
             : SIG_VALIDATION_FAILED;
@@ -291,12 +295,11 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
 
         manifest.executionFunctions = new bytes4[](2);
         manifest.executionFunctions[0] = GrowYieldPlugin.executeGrowYield.selector;
-        manifest.executionFunctions[1] = GrowYieldPlugin.executeGrowYieldWithEphemeralAllowance.selector;
+        manifest.executionFunctions[1] =
+        GrowYieldPlugin.executeGrowYieldWithEphemeralAllowance.selector;
 
         ManifestFunction memory policyValidation = ManifestFunction({
-            functionType: ManifestAssociatedFunctionType.SELF,
-            functionId: 0,
-            dependencyIndex: 0
+            functionType: ManifestAssociatedFunctionType.SELF, functionId: 0, dependencyIndex: 0
         });
         ManifestFunction memory denyRuntime = ManifestFunction({
             functionType: ManifestAssociatedFunctionType.PRE_HOOK_ALWAYS_DENY,
@@ -341,27 +344,6 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
     {
         return interfaceId == type(IValidationModule).interfaceId
             || super.supportsInterface(interfaceId);
-    }
-
-    function _onInstall(bytes calldata data) internal override isNotInitialized(msg.sender) {
-        if (_accountConfigs[msg.sender].entityId != 0) revert PolicyAlreadyInstalled();
-
-        (uint32 entityId, address[] memory initialOwners, address executor, address paymaster) =
-            abi.decode(data, (uint32, address[], address, address));
-        if (entityId == 0 || initialOwners.length == 0 || initialOwners.length > MAX_OWNERS) {
-            revert InvalidConfiguration();
-        }
-
-        _accountConfigs[msg.sender].entityId = entityId;
-        for (uint256 i; i < initialOwners.length; ++i) {
-            _addOwner(msg.sender, initialOwners[i]);
-        }
-        _setExecutor(msg.sender, executor);
-        _setPaymaster(msg.sender, paymaster);
-    }
-
-    function _isInitialized(address account) internal view override returns (bool) {
-        return _accountConfigs[account].entityId != 0;
     }
 
     function _addOwner(address account, address owner) private {
@@ -420,6 +402,16 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         emit PaymasterSet(account, address(0));
     }
 
+    /// @dev UserOp validation is not the only way into an execution function: `executeFromPlugin`
+    ///      runs pre-execution hooks only, so the manifest's `PRE_HOOK_ALWAYS_DENY` pre-runtime
+    ///      hooks never see that path. Re-checking here keeps `permitAnyExternalAddress` pointed at
+    ///      the one executor the account approved, whatever route reached this call.
+    function _requireApprovedExecutor(address executor) private view {
+        address approved = _accountConfigs[msg.sender].executor;
+        if (approved == address(0)) revert PolicyNotInstalled();
+        if (executor != approved) revert UnauthorizedExecutor();
+    }
+
     function _gasPolicyAllows(PackedUserOperation calldata userOp) private view returns (bool) {
         return userOp.unpackVerificationGasLimit() <= maxVerificationGas
             && userOp.unpackCallGasLimit() <= maxCallGas
@@ -447,7 +439,11 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
             && uint128(bytes16(paymasterAndData[36:52])) <= maxPaymasterPostOpGas;
     }
 
-    function _pluginCallAllowed(address account, bytes calldata callData) private view returns (bool) {
+    function _pluginCallAllowed(address account, bytes calldata callData)
+        private
+        view
+        returns (bool)
+    {
         if (callData.length < 4) return false;
 
         bytes4 selector = bytes4(callData[:4]);
@@ -471,9 +467,5 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         } catch {
             return false;
         }
-    }
-
-    function _mscaPaymasterAllowed(address account, bytes calldata paymasterAndData) private view returns (bool) {
-        return _paymasterPolicyAllows(account, paymasterAndData);
     }
 }

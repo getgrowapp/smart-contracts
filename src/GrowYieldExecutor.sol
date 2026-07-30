@@ -19,7 +19,9 @@ import {
 import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
 
 interface IAccountExecute {
-    function execute(address target, uint256 value, bytes calldata data) external returns (bytes memory);
+    function execute(address target, uint256 value, bytes calldata data)
+        external
+        returns (bytes memory);
 }
 
 /// @title GrowYieldExecutor
@@ -164,8 +166,7 @@ contract GrowYieldExecutor is
     }
 
     function _ephemeralAllowance(address account, address token, uint256 amount) private {
-        bytes memory data =
-            abi.encodeWithSelector(IERC20.approve.selector, address(this), amount);
+        bytes memory data = abi.encodeWithSelector(IERC20.approve.selector, address(this), amount);
         IAccountExecute(account).execute(token, 0, data);
     }
 

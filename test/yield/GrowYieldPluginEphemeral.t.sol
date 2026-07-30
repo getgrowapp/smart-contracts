@@ -10,6 +10,7 @@ import {SIG_VALIDATION_PASSED} from "@alchemy/msca/libraries/Constants.sol";
 import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
 import {GrowYieldPlugin} from "../../src/GrowYieldPlugin.sol";
 import {MockValidationModule} from "./mocks/MockVaultV2Stack.sol";
+import {IGrowYieldPolicyModule} from "../../src/interfaces/IGrowYieldPolicyModule.sol";
 import {Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
 
 /// @dev MSCA account surface for plugin ephemeral-allowance tests.
@@ -33,6 +34,16 @@ contract MockPluginAccount {
         returns (bytes memory result)
     {
         return this.execute(target, value, data);
+    }
+}
+
+/// @dev Drains whatever allowance the caller granted it, standing in for an arbitrary address
+///      passed as `executor`.
+contract RogueExecutor {
+    function execute(Operation[] calldata ops) external returns (uint256[] memory) {
+        IERC20 token = IERC20(ops[0].sourceToken);
+        token.transferFrom(msg.sender, address(this), token.balanceOf(msg.sender));
+        return new uint256[](ops.length);
     }
 }
 
@@ -64,7 +75,9 @@ contract GrowYieldPluginEphemeralTest is GrowYieldTestBase {
         assertEq(aavePool.aToken().balanceOf(account), 250e6);
     }
 
-    function test_executeGrowYieldWithEphemeralAllowance_reallocateWithoutStandingAllowance() public {
+    function test_executeGrowYieldWithEphemeralAllowance_reallocateWithoutStandingAllowance()
+        public
+    {
         underlying.mint(account, 500e6);
 
         Operation[] memory depositOps = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 500e6));
@@ -94,7 +107,9 @@ contract GrowYieldPluginEphemeralTest is GrowYieldTestBase {
         UserOperation memory userOp = _mscaUserOp(callData, userOpHash);
 
         vm.prank(account);
-        assertEq(policyModule.userOpValidationFunction(0, userOp, userOpHash), SIG_VALIDATION_PASSED);
+        assertEq(
+            policyModule.userOpValidationFunction(0, userOp, userOpHash), SIG_VALIDATION_PASSED
+        );
     }
 
     function test_userOpValidation_acceptsAlchemyGasManagerPaymasterData() public {
@@ -114,20 +129,53 @@ contract GrowYieldPluginEphemeralTest is GrowYieldTestBase {
         );
 
         vm.prank(account);
-        assertEq(policyModule.userOpValidationFunction(0, userOp, userOpHash), SIG_VALIDATION_PASSED);
+        assertEq(
+            policyModule.userOpValidationFunction(0, userOp, userOpHash), SIG_VALIDATION_PASSED
+        );
     }
 
     function test_userOpValidation_rejectsEphemeralPluginCallWithBadOps() public {
         Operation[] memory ops = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 100e6));
         bytes memory callData = abi.encodeCall(
-            GrowYieldPlugin.executeGrowYieldWithEphemeralAllowance,
-            (makeAddr("wrongExecutor"), ops)
+            GrowYieldPlugin.executeGrowYieldWithEphemeralAllowance, (makeAddr("wrongExecutor"), ops)
         );
         bytes32 userOpHash = keccak256("ephemeral-plugin-bad-executor");
         UserOperation memory userOp = _mscaUserOp(callData, userOpHash);
 
         vm.prank(account);
         assertEq(policyModule.userOpValidationFunction(0, userOp, userOpHash), uint256(1));
+    }
+
+    /// @dev Validation is not the only route to an execution function: `executeFromPlugin` runs
+    ///      pre-execution hooks only, so the manifest's `PRE_HOOK_ALWAYS_DENY` pre-runtime hooks
+    ///      never cover it. Reaching either execution function with an unapproved executor must
+    ///      revert on its own, because the ephemeral path would otherwise approve that address for
+    ///      the account's full balance before calling it.
+    function test_ephemeralExecution_rejectsUnapprovedExecutor() public {
+        underlying.mint(account, 1_000e6);
+        RogueExecutor rogue = new RogueExecutor();
+        Operation[] memory ops = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 1_000e6));
+
+        vm.prank(account);
+        vm.expectRevert(IGrowYieldPolicyModule.UnauthorizedExecutor.selector);
+        policyModule.executeGrowYieldWithEphemeralAllowance(address(rogue), ops);
+
+        assertEq(underlying.balanceOf(account), 1_000e6);
+        assertEq(underlying.balanceOf(address(rogue)), 0);
+        assertEq(underlying.allowance(account, address(rogue)), 0);
+    }
+
+    function test_execution_rejectsUnapprovedExecutor() public {
+        vm.prank(account);
+        vm.expectRevert(IGrowYieldPolicyModule.UnauthorizedExecutor.selector);
+        policyModule.executeGrowYield(makeAddr("wrongExecutor"), hex"deadbeef");
+    }
+
+    function test_execution_rejectsUninstalledAccount() public {
+        address stranger = makeAddr("stranger");
+        vm.prank(stranger);
+        vm.expectRevert(IGrowYieldPolicyModule.PolicyNotInstalled.selector);
+        policyModule.executeGrowYield(address(executor), hex"deadbeef");
     }
 
     function _mscaUserOp(bytes memory callData, bytes32 userOpHash)
