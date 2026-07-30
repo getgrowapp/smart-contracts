@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Deploy fixed GrowYield MSCA plugin (EP v0.6 paymaster parsing). Policy module + executor unchanged.
+# Deploy GrowYield MSCA plugin (grow.yield-policy.7.0.0). Executor/registry unchanged.
+# Latest bytecode includes _requireApprovedExecutor on ephemeral allowance path.
 set -euo pipefail
 
 # shellcheck disable=SC1091
@@ -23,5 +24,14 @@ forge script script/DeployMscaPlugin.s.sol \
 NEW_PLUGIN=$(node -e "console.log(require('./deployments/production-msca.json').mscaPlugin)")
 echo ""
 echo "After deploy:"
-echo "  1. Update grow_yield_module_address AND grow_yield_msca_plugin_address = $NEW_PLUGIN"
-echo "  2. Regenerate backend constants and run DB migrations as needed"
+echo "  cd ../grow-backend"
+echo "  npx ts-node scripts/generate-base-grow-yield-msca-plugin-migration.ts --apply"
+echo "  (or omit --apply to write SQL only, then run migration + npm run generate:constants)"
+echo ""
+echo "  Railway production env (when ready to surface install to users):"
+echo "    GROW_YIELD_MODULE_INSTALL_ENABLED=true"
+echo "    GROW_YIELD_SKIP_SESSION_KEY_DEPLOY=true"
+echo "    SESSION_KEY_ADDRESS=<policy owner>"
+echo "    ALCHEMY_GAS_POLICY_ID=<gas manager policy>"
+echo ""
+echo "  New plugin: $NEW_PLUGIN"
