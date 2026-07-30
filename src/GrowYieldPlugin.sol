@@ -94,6 +94,7 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         external
         returns (bytes memory)
     {
+        _requireApprovedExecutor(executor);
         return IPluginExecutor(msg.sender).executeFromPluginExternal(executor, 0, executorCallData);
     }
 
@@ -102,6 +103,7 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         external
         returns (bytes memory)
     {
+        _requireApprovedExecutor(executor);
         return GrowYieldPluginEphemeralLib.executeWithEphemeralAllowance(executor, ops);
     }
 
@@ -419,6 +421,16 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         accountConfig.paymaster = address(0);
         emit ExecutorSet(account, address(0));
         emit PaymasterSet(account, address(0));
+    }
+
+    /// @dev UserOp validation is not the only way into an execution function: `executeFromPlugin`
+    ///      runs pre-execution hooks only, so the manifest's `PRE_HOOK_ALWAYS_DENY` pre-runtime
+    ///      hooks never see that path. Re-checking here keeps `permitAnyExternalAddress` pointed at
+    ///      the one executor the account approved, whatever route reached this call.
+    function _requireApprovedExecutor(address executor) private view {
+        address approved = _accountConfigs[msg.sender].executor;
+        if (approved == address(0)) revert PolicyNotInstalled();
+        if (executor != approved) revert UnauthorizedExecutor();
     }
 
     function _gasPolicyAllows(PackedUserOperation calldata userOp) private view returns (bool) {

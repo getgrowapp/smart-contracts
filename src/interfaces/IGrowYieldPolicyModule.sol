@@ -38,6 +38,9 @@ interface IGrowYieldPolicyModule is IValidationModule {
     /// @notice The calling account already has a Grow validation entity configured.
     error PolicyAlreadyInstalled();
 
+    /// @notice The execution function was given an executor the calling account has not approved.
+    error UnauthorizedExecutor();
+
     /// @notice Add an ECDSA policy owner for the calling account.
     /// @dev A modular account should call this through its owner-authorized execution path.
     function addOwner(address owner) external;
