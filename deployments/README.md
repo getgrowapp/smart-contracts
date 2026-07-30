@@ -9,13 +9,35 @@ commit. Push the updated artifact to the repository so deployed addresses are tr
 version control and reviewable in the deploy PR — the repo is the source of truth for what
 is live on each network.
 
-Stamp the source commit into the artifact by exporting it before broadcasting:
+## Signer setup
+
+Deploy scripts use an encrypted Foundry keystore, not a plaintext private key in `.env`.
+
+```sh
+# One-time import (prompts for password; stores ~/.foundry/keystores/)
+cast wallet import grow-deployer --interactive
+
+# Copy smart-contracts/.env.example → .env and set RPC + Basescan keys
+cp .env.example .env
+```
+
+## Broadcast
+
+```sh
+GIT_COMMIT=$(git rev-parse HEAD) ./script/deploy-production-base.sh
+```
+
+Or directly:
 
 ```sh
 GIT_COMMIT=$(git rev-parse HEAD) \
 forge script script/Deploy.s.sol --sig "run(string)" staging \
-  --rpc-url "$BASE_RPC_URL" --broadcast --private-key "$PK"
+  --rpc-url "$BASE_RPC_URL" --broadcast --account grow-deployer
 ```
+
+Registry `addVaults` on production is a Grow Safe governance action — use
+`grow-allocation-controller/script/safe/propose-add-executor-vaults.mjs`, not a Foundry
+broadcast from this repo.
 
 Each file contains:
 

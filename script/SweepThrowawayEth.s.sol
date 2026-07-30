@@ -6,8 +6,7 @@ import {Script, console2} from "forge-std/Script.sol";
 /// @notice Sweep leftover throwaway ETH to the relay deployer after Morpho smoke.
 contract SweepThrowawayEth is Script {
     function run() external {
-        uint256 deployerPk = vm.envUint("PRIVATE_KEY");
-        address deployer = vm.addr(deployerPk);
+        address deployer = vm.envAddress("DEPLOYER_ADDRESS");
         uint256 throwawayPk =
             uint256(keccak256(abi.encodePacked("grow-smoke-v3", deployer, block.chainid)));
         address throwaway = vm.addr(throwawayPk);

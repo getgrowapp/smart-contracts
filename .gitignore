@@ -5,6 +5,7 @@ bindings/
 .vscode/
 .env
 .env.*
+!.env.example
 *.log
 lcov.info
 coverage/

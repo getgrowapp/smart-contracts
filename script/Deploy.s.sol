@@ -25,7 +25,8 @@ import {GrowYieldDeployer} from "./GrowYieldDeployer.sol";
 /// @notice Deploys the full GrowYield stack deterministically via CREATE2 from a per-environment
 ///         JSON config, then writes the resulting addresses to `deployments/<env>.json`.
 /// @dev Usage: forge script script/Deploy.s.sol --sig "run(string)" staging \
-///          --rpc-url <url> --broadcast --private-key $PK
+///          --rpc-url <url> --broadcast --account <keystore-name>
+///      Import the signer once: cast wallet import grow-deployer --interactive
 ///      Set GIT_COMMIT=$(git rev-parse HEAD) to stamp the deployment artifact with the source
 ///      commit. Commit the resulting `deployments/<env>.json` so on-chain addresses are tracked
 ///      in version control (see deployments/README.md).
