@@ -480,7 +480,9 @@ contract GrowYieldPolicyModuleTest is GrowYieldTestBase {
     function test_runtimeAnd1271PathsAreDisabled() public {
         vm.expectRevert(
             abi.encodeWithSelector(
-                BasePlugin.NotImplemented.selector, GrowYieldPlugin.validateRuntime.selector, uint8(0)
+                BasePlugin.NotImplemented.selector,
+                GrowYieldPlugin.validateRuntime.selector,
+                uint8(0)
             )
         );
         policyModule.validateRuntime(account, 0, automation, 0, "", "");

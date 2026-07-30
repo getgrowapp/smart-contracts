@@ -90,7 +90,10 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         maxFeePerGas = maxFeePerGas_;
     }
 
-    function executeGrowYield(address executor, bytes calldata executorCallData) external returns (bytes memory) {
+    function executeGrowYield(address executor, bytes calldata executorCallData)
+        external
+        returns (bytes memory)
+    {
         return IPluginExecutor(msg.sender).executeFromPluginExternal(executor, 0, executorCallData);
     }
 
@@ -256,19 +259,17 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         return "grow.yield-policy.7.0.0";
     }
 
-    function userOpValidationFunction(uint8 functionId, UserOperation calldata userOp, bytes32 userOpHash)
-        external
-        view
-        override
-        returns (uint256)
-    {
+    function userOpValidationFunction(
+        uint8 functionId,
+        UserOperation calldata userOp,
+        bytes32 userOpHash
+    ) external view override returns (uint256) {
         if (functionId != 0) revert NotImplemented(msg.sig, functionId);
 
         address account = msg.sender;
         if (
             _accountConfigs[account].entityId == 0 || userOp.signature.length != SIGNATURE_LENGTH
-                || userOp.initCode.length != 0
-                || userOp.verificationGasLimit > maxVerificationGas
+                || userOp.initCode.length != 0 || userOp.verificationGasLimit > maxVerificationGas
                 || userOp.callGasLimit > maxCallGas
                 || userOp.preVerificationGas > maxPreVerificationGas
                 || userOp.maxPriorityFeePerGas > maxPriorityFeePerGas
@@ -278,7 +279,8 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         ) return SIG_VALIDATION_FAILED;
 
         bytes32 digest = this.authorizationDigest(userOpHash);
-        (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecoverCalldata(digest, userOp.signature);
+        (address recovered, ECDSA.RecoverError err,) =
+            ECDSA.tryRecoverCalldata(digest, userOp.signature);
         return err == ECDSA.RecoverError.NoError && isOwner(account, recovered)
             ? SIG_VALIDATION_PASSED
             : SIG_VALIDATION_FAILED;
@@ -291,12 +293,11 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
 
         manifest.executionFunctions = new bytes4[](2);
         manifest.executionFunctions[0] = GrowYieldPlugin.executeGrowYield.selector;
-        manifest.executionFunctions[1] = GrowYieldPlugin.executeGrowYieldWithEphemeralAllowance.selector;
+        manifest.executionFunctions[1] =
+        GrowYieldPlugin.executeGrowYieldWithEphemeralAllowance.selector;
 
         ManifestFunction memory policyValidation = ManifestFunction({
-            functionType: ManifestAssociatedFunctionType.SELF,
-            functionId: 0,
-            dependencyIndex: 0
+            functionType: ManifestAssociatedFunctionType.SELF, functionId: 0, dependencyIndex: 0
         });
         ManifestFunction memory denyRuntime = ManifestFunction({
             functionType: ManifestAssociatedFunctionType.PRE_HOOK_ALWAYS_DENY,
@@ -447,7 +448,11 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
             && uint128(bytes16(paymasterAndData[36:52])) <= maxPaymasterPostOpGas;
     }
 
-    function _pluginCallAllowed(address account, bytes calldata callData) private view returns (bool) {
+    function _pluginCallAllowed(address account, bytes calldata callData)
+        private
+        view
+        returns (bool)
+    {
         if (callData.length < 4) return false;
 
         bytes4 selector = bytes4(callData[:4]);
@@ -473,7 +478,11 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         }
     }
 
-    function _mscaPaymasterAllowed(address account, bytes calldata paymasterAndData) private view returns (bool) {
+    function _mscaPaymasterAllowed(address account, bytes calldata paymasterAndData)
+        private
+        view
+        returns (bool)
+    {
         return _paymasterPolicyAllows(account, paymasterAndData);
     }
 }

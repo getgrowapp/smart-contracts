@@ -64,7 +64,9 @@ contract GrowYieldPluginEphemeralTest is GrowYieldTestBase {
         assertEq(aavePool.aToken().balanceOf(account), 250e6);
     }
 
-    function test_executeGrowYieldWithEphemeralAllowance_reallocateWithoutStandingAllowance() public {
+    function test_executeGrowYieldWithEphemeralAllowance_reallocateWithoutStandingAllowance()
+        public
+    {
         underlying.mint(account, 500e6);
 
         Operation[] memory depositOps = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 500e6));
@@ -94,7 +96,9 @@ contract GrowYieldPluginEphemeralTest is GrowYieldTestBase {
         UserOperation memory userOp = _mscaUserOp(callData, userOpHash);
 
         vm.prank(account);
-        assertEq(policyModule.userOpValidationFunction(0, userOp, userOpHash), SIG_VALIDATION_PASSED);
+        assertEq(
+            policyModule.userOpValidationFunction(0, userOp, userOpHash), SIG_VALIDATION_PASSED
+        );
     }
 
     function test_userOpValidation_acceptsAlchemyGasManagerPaymasterData() public {
@@ -114,14 +118,15 @@ contract GrowYieldPluginEphemeralTest is GrowYieldTestBase {
         );
 
         vm.prank(account);
-        assertEq(policyModule.userOpValidationFunction(0, userOp, userOpHash), SIG_VALIDATION_PASSED);
+        assertEq(
+            policyModule.userOpValidationFunction(0, userOp, userOpHash), SIG_VALIDATION_PASSED
+        );
     }
 
     function test_userOpValidation_rejectsEphemeralPluginCallWithBadOps() public {
         Operation[] memory ops = _ops1(_op(aaveVault, OperationKind.DEPOSIT, 100e6));
         bytes memory callData = abi.encodeCall(
-            GrowYieldPlugin.executeGrowYieldWithEphemeralAllowance,
-            (makeAddr("wrongExecutor"), ops)
+            GrowYieldPlugin.executeGrowYieldWithEphemeralAllowance, (makeAddr("wrongExecutor"), ops)
         );
         bytes32 userOpHash = keccak256("ephemeral-plugin-bad-executor");
         UserOperation memory userOp = _mscaUserOp(callData, userOpHash);

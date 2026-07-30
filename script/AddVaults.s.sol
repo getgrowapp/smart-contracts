@@ -44,7 +44,12 @@ contract AddVaults is Script {
         vm.stopBroadcast();
 
         _validateAdmission(executor, pending);
-        console2.log("Admitted", pending.length, "vault(s); vaultCount:", GrowYieldExecutor(executor).vaultCount());
+        console2.log(
+            "Admitted",
+            pending.length,
+            "vault(s); vaultCount:",
+            GrowYieldExecutor(executor).vaultCount()
+        );
     }
 
     function _filterPending(address executor, IGrowYieldAdapterRegistry.VaultConfig[] memory vaults)
@@ -74,12 +79,14 @@ contract AddVaults is Script {
     {
         address[PROTOCOL_COUNT] memory adapterByProtocol;
         adapterByProtocol[uint256(Protocol.AAVE)] = vm.parseJsonAddress(config, ".adapters.aave");
-        adapterByProtocol[uint256(Protocol.MORPHO)] = vm.parseJsonAddress(config, ".adapters.morpho");
+        adapterByProtocol[uint256(Protocol.MORPHO)] =
+            vm.parseJsonAddress(config, ".adapters.morpho");
         adapterByProtocol[uint256(Protocol.EULER_EVK)] =
             vm.parseJsonAddress(config, ".adapters.eulerEVault");
         adapterByProtocol[uint256(Protocol.EULER_EARN)] =
             vm.parseJsonAddress(config, ".adapters.eulerEarn");
-        adapterByProtocol[uint256(Protocol.CAPYFI)] = vm.parseJsonAddress(config, ".adapters.capyfi");
+        adapterByProtocol[uint256(Protocol.CAPYFI)] =
+            vm.parseJsonAddress(config, ".adapters.capyfi");
 
         VaultCfg[][] memory perProtocol = new VaultCfg[][](PROTOCOL_COUNT);
         uint256 total;
