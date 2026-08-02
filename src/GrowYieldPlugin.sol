@@ -39,7 +39,9 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
     using UserOperationLib for PackedUserOperation;
 
     uint256 private constant SIGNATURE_LENGTH = 65;
-    uint256 private constant PAYMASTER_STATIC_FIELDS_LENGTH = 52;
+    uint256 private constant PAYMASTER_ADDRESS_LENGTH = 20;
+    /// @dev Where EntryPoint v0.7 paymaster data begins, i.e. past the two packed gas limits.
+    uint256 private constant PAYMASTER_DATA_OFFSET = 52;
     uint256 private constant MAX_PAYMASTER_AND_DATA_LENGTH = 512;
 
     bytes4 private constant ERC1271_INVALID = 0xffffffff;
@@ -276,7 +278,7 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
                 || userOp.preVerificationGas > maxPreVerificationGas
                 || userOp.maxPriorityFeePerGas > maxPriorityFeePerGas
                 || userOp.maxFeePerGas > maxFeePerGas
-                || !_paymasterPolicyAllows(account, userOp.paymasterAndData)
+                || !_legacyPaymasterPolicyAllows(account, userOp.paymasterAndData)
                 || !_pluginCallAllowed(account, userOp.callData)
         ) return SIG_VALIDATION_FAILED;
 
@@ -420,23 +422,39 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
             && userOp.unpackMaxFeePerGas() <= maxFeePerGas;
     }
 
+    /// @dev EntryPoint v0.7 layout, which is positional and not negotiable: `[0:20)` paymaster,
+    ///      `[20:36)` paymaster verification gas, `[36:52)` paymaster postOp gas, `[52:)` paymaster
+    ///      data. The two gas fields sit at those offsets no matter what the paymaster appends after
+    ///      them — a verifying paymaster's `validUntil`/`validAfter` and signature start at 52 — so
+    ///      both ceilings apply to every operation, however long `paymasterAndData` is.
     function _paymasterPolicyAllows(address account, bytes calldata paymasterAndData)
         private
         view
         returns (bool)
     {
         if (
-            paymasterAndData.length < PAYMASTER_STATIC_FIELDS_LENGTH
+            paymasterAndData.length < PAYMASTER_DATA_OFFSET
                 || paymasterAndData.length > MAX_PAYMASTER_AND_DATA_LENGTH
                 || address(bytes20(paymasterAndData[:20])) != _accountConfigs[account].paymaster
         ) return false;
 
-        // Alchemy Gas Manager appends validUntil + signature after the paymaster address.
-        // Bytes [20:52) are not verification/postOp gas limits in that encoding.
-        if (paymasterAndData.length > PAYMASTER_STATIC_FIELDS_LENGTH) return true;
-
         return uint128(bytes16(paymasterAndData[20:36])) <= maxPaymasterVerificationGas
             && uint128(bytes16(paymasterAndData[36:52])) <= maxPaymasterPostOpGas;
+    }
+
+    /// @dev EntryPoint v0.6 layout: `[0:20)` paymaster, `[20:)` paymaster data. A v0.6
+    ///      UserOperation carries no paymaster gas limits, so there is nothing for
+    ///      `maxPaymasterVerificationGas` / `maxPaymasterPostOpGas` to bound on this path and the
+    ///      minimum length is the address alone. Reading bytes `[20:52)` as gas limits here would
+    ///      be reading a Gas Manager's timestamps and signature.
+    function _legacyPaymasterPolicyAllows(address account, bytes calldata paymasterAndData)
+        private
+        view
+        returns (bool)
+    {
+        return paymasterAndData.length >= PAYMASTER_ADDRESS_LENGTH
+            && paymasterAndData.length <= MAX_PAYMASTER_AND_DATA_LENGTH
+            && address(bytes20(paymasterAndData[:20])) == _accountConfigs[account].paymaster;
     }
 
     function _pluginCallAllowed(address account, bytes calldata callData)
