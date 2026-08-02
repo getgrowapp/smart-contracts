@@ -12,3 +12,4 @@ coverage/
 .bin/
 node_modules/
 .venv-slither/
+.claude

@@ -154,9 +154,4 @@ interface IGrowYieldExecutor is IGrowYieldAdapterRegistry {
 
     /// @notice Execute operations and credit every output directly to `msg.sender`.
     function execute(Operation[] calldata ops) external returns (uint256[] memory received);
-
-    /// @notice `execute` with ephemeral `msg.sender` → executor allowances per op `sourceToken`.
-    function executeWithEphemeralAllowance(Operation[] calldata ops)
-        external
-        returns (uint256[] memory received);
 }

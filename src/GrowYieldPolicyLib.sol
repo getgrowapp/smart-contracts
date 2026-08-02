@@ -46,13 +46,14 @@ library GrowYieldPolicyLib {
         (address target, uint256 value, bytes memory data) =
             abi.decode(callData[4:], (address, uint256, bytes));
 
-        return target == executor && value == 0 && isAllowedExecutorPayloadMemory(data)
+        return target == executor && value == 0 && _isAllowedExecutorPayload(data)
             && keccak256(callData)
                 == keccak256(abi.encodeCall(IModularAccount.execute, (target, value, data)));
     }
 
-    /// @dev Inner `executor.execute(ops)` payload for MSCA `executeGrowYield` UserOps.
-    function isAllowedExecutorPayloadMemory(bytes memory data) internal pure returns (bool) {
+    /// @dev The inner `executor.execute(ops)` payload. Only the selector and a length ceiling are
+    ///      checked; the operations themselves are the executor's business, per `isAllowed`.
+    function _isAllowedExecutorPayload(bytes memory data) private pure returns (bool) {
         return data.length >= 4 && data.length <= MAX_INNER_LENGTH
             && bytes4(_loadSelector(data)) == IGrowYieldExecutor.execute.selector;
     }
