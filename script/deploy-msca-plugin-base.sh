@@ -5,15 +5,14 @@ set -euo pipefail
 
 # shellcheck disable=SC1091
 source "$(dirname "$0")/lib/forge-env.sh"
-require_foundry_account
-
 echo "Deployer: $(deployer_address)"
 echo "Policy module: $(node -e "console.log(require('./deployments/production-msca.json').policyModule)")"
 
+# shellcheck disable=SC2046
 forge script script/DeployMscaPlugin.s.sol \
   --sig "run(string)" production \
   --rpc-url "$BASE_RPC_URL" \
-  --account "$FOUNDRY_ACCOUNT" \
+  $(forge_broadcast_args) \
   --broadcast \
   --slow \
   --verify \
@@ -29,9 +28,6 @@ echo "  npx ts-node scripts/generate-base-grow-yield-msca-plugin-migration.ts --
 echo "  (or omit --apply to write SQL only, then run migration + npm run generate:constants)"
 echo ""
 echo "  Railway production env (when ready to surface install to users):"
-echo "    GROW_YIELD_MODULE_INSTALL_ENABLED=true"
-echo "    GROW_YIELD_SKIP_SESSION_KEY_DEPLOY=true"
-echo "    SESSION_KEY_ADDRESS=<policy owner>"
-echo "    ALCHEMY_GAS_POLICY_ID=<gas manager policy>"
+echo "    GROW_YIELD_MODULE_ENABLED=true"
 echo ""
 echo "  New plugin: $NEW_PLUGIN"

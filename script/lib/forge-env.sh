@@ -13,6 +13,30 @@ if [ -f .env ]; then
   set +a
 fi
 
+load_env_private_key() {
+  local var_name="$1"
+  local env_file="$2"
+  if [ ! -f "$env_file" ]; then
+    return 1
+  fi
+  local value
+  value="$(grep -E "^${var_name}=" "$env_file" | head -1 | cut -d= -f2- | tr -d '\r"' | xargs)"
+  if [ -n "$value" ]; then
+    printf '%s' "$value"
+    return 0
+  fi
+  return 1
+}
+
+# Reuse grow-backend deployer when no Foundry keystore is configured locally.
+if [ -z "${DEPLOYMENT_WALLET_PRIVATE_KEY:-}" ] && [ -f ../grow-backend/.env ]; then
+  DEPLOYMENT_WALLET_PRIVATE_KEY="$(
+    load_env_private_key RELAYER_FACTORY_DEPLOY_PRIVATE_KEY ../grow-backend/.env \
+      || load_env_private_key DEPLOYMENT_WALLET_PRIVATE_KEY ../grow-backend/.env
+  )"
+  export DEPLOYMENT_WALLET_PRIVATE_KEY
+fi
+
 export BASE_RPC_URL="${BASE_RPC_URL:-https://mainnet.base.org}"
 export FOUNDRY_ACCOUNT="${FOUNDRY_ACCOUNT:-grow-deployer}"
 export GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse HEAD)}"
@@ -34,5 +58,27 @@ require_foundry_account() {
 }
 
 deployer_address() {
-  cast wallet address --account "$FOUNDRY_ACCOUNT"
+  if cast wallet address --account "$FOUNDRY_ACCOUNT" >/dev/null 2>&1; then
+    cast wallet address --account "$FOUNDRY_ACCOUNT"
+    return
+  fi
+  if [ -n "${DEPLOYMENT_WALLET_PRIVATE_KEY:-}" ]; then
+    cast wallet address --private-key "$DEPLOYMENT_WALLET_PRIVATE_KEY"
+    return
+  fi
+  echo "No deployer: import ${FOUNDRY_ACCOUNT} or set DEPLOYMENT_WALLET_PRIVATE_KEY" >&2
+  exit 1
+}
+
+forge_broadcast_args() {
+  if cast wallet address --account "$FOUNDRY_ACCOUNT" >/dev/null 2>&1; then
+    echo "--account" "$FOUNDRY_ACCOUNT"
+    return
+  fi
+  if [ -n "${DEPLOYMENT_WALLET_PRIVATE_KEY:-}" ]; then
+    echo "--private-key" "$DEPLOYMENT_WALLET_PRIVATE_KEY"
+    return
+  fi
+  echo "No deployer: import ${FOUNDRY_ACCOUNT} or set DEPLOYMENT_WALLET_PRIVATE_KEY" >&2
+  exit 1
 }
