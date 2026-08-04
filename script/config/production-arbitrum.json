@@ -1,0 +1,38 @@
+{
+  "executor": {
+    "maxLossBps": 50,
+    "riskGuardian": "0x91E633eBF851800D5b1553E99398AffD8d942B2d"
+  },
+  "registry": {
+    "owner": "0xe8D212F886109cbf01e8294E3640a6Fb05544ff3",
+    "registrars": {
+      "aavePool": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "aaveDataProvider": "0x243Aa95cAC2a25651eda86e80bEe66114413c43b"
+    }
+  },
+  "policyModule": {
+    "maxVerificationGas": 500000,
+    "maxCallGas": 4000000,
+    "maxPreVerificationGas": 150000,
+    "maxPaymasterVerificationGas": 200000,
+    "maxPaymasterPostOpGas": 200000,
+    "maxPriorityFeePerGas": 2000000000,
+    "maxFeePerGas": 2000000000
+  },
+  "salts": {
+    "executor": "0x0000000000000000000000000000000000000000000000000000000000000021",
+    "policyModule": "0x0000000000000000000000000000000000000000000000000000000000000022"
+  },
+  "adapters": {
+    "aave": "0x0000000000000000000000000000000000000000000000000000000000000030"
+  },
+  "vaults": {
+    "aave": [
+      {
+        "vault": "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
+        "canDeposit": true,
+        "canRedeem": true
+      }
+    ]
+  }
+}

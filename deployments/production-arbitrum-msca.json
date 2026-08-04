@@ -1,0 +1,8 @@
+{
+  "chainId": 42161,
+  "commitSha": "60af3c4b6aa54347bde8252dcefe23df21a7eafc",
+  "executor": "0x67D3c04919e625EC5ab74C84C107DbE031cc83f9",
+  "mscaPlugin": "0xDF1223349A792D8A638ee52eA94305217b52B07E",
+  "policyModule": "0xDF1223349A792D8A638ee52eA94305217b52B07E",
+  "timestamp": 1785811196
+}

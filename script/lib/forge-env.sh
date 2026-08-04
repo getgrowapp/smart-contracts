@@ -70,6 +70,10 @@ deployer_address() {
   exit 1
 }
 
+require_deployer() {
+  deployer_address >/dev/null
+}
+
 forge_broadcast_args() {
   if cast wallet address --account "$FOUNDRY_ACCOUNT" >/dev/null 2>&1; then
     echo "--account" "$FOUNDRY_ACCOUNT"

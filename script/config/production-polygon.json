@@ -1,0 +1,48 @@
+{
+  "executor": {
+    "maxLossBps": 50,
+    "riskGuardian": "0x91E633eBF851800D5b1553E99398AffD8d942B2d"
+  },
+  "registry": {
+    "owner": "0xe8D212F886109cbf01e8294E3640a6Fb05544ff3",
+    "registrars": {
+      "morphoVaultFactory": "0xC11a53eE9B1eCc7a068D8e40F8F17926584F97Cf",
+      "morphoAdapterFactory": "0xEb174FEA51Da241eB3B516959B216e013de2888a",
+      "morphoEligibility": "0xeF4015eA5ce1A90a5D4C329156380be274BBA7a5"
+    }
+  },
+  "policyModule": {
+    "maxVerificationGas": 500000,
+    "maxCallGas": 4000000,
+    "maxPreVerificationGas": 150000,
+    "maxPaymasterVerificationGas": 200000,
+    "maxPaymasterPostOpGas": 200000,
+    "maxPriorityFeePerGas": 200000000000,
+    "maxFeePerGas": 2000000000000
+  },
+  "salts": {
+    "executor": "0x0000000000000000000000000000000000000000000000000000000000000021",
+    "policyModule": "0x0000000000000000000000000000000000000000000000000000000000000022",
+    "morphoEligibility": "0x000000000000000000000000000000000000000000000000000000000000001f"
+  },
+  "adapters": {
+    "morpho": "0x0000000000000000000000000000000000000000000000000000000000000031"
+  },
+  "morphoEligibilityChildren": [
+    "0xBEEf0F82E269760429BE6255Fa00821b7e4b592A"
+  ],
+  "vaults": {
+    "morpho": [
+      {
+        "vault": "0xD32F56DbBC4aA3dd6E955C4c2ffB0c9DBa368D89",
+        "canDeposit": true,
+        "canRedeem": true
+      },
+      {
+        "vault": "0x393b108b89604667B34a7d2D625F9bB3EB550c36",
+        "canDeposit": true,
+        "canRedeem": true
+      }
+    ]
+  }
+}
