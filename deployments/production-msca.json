@@ -1,8 +1,8 @@
 {
   "chainId": 8453,
-  "commitSha": "e435bf63fdf1fb59d60bb8622b3c5190606382ed",
+  "commitSha": "0424bc49c17df69a4848eb33591fe766e151199b",
   "executor": "0xEfD0e3d9f5E9fB5428dD9dd271B85247384A8cD0",
-  "mscaPlugin": "0xf3a6A963fE0bc88158E03AB310711A7F9027b156",
-  "policyModule": "0xf3a6A963fE0bc88158E03AB310711A7F9027b156",
-  "timestamp": 1785740017
+  "mscaPlugin": "0x152be1DB3D6cEBbF051B20a79b43A8030cCB6C95",
+  "policyModule": "0x152be1DB3D6cEBbF051B20a79b43A8030cCB6C95",
+  "timestamp": 1785810607
 }
