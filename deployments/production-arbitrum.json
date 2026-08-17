@@ -1,0 +1,31 @@
+{
+  "adapterAddresses": [
+    "0x6719661f5114B31C2E9a0744eB4C52Ae0312B8A2"
+  ],
+  "adapterKinds": [
+    "aave"
+  ],
+  "chainId": 42161,
+  "commitSha": "0424bc49c17df69a4848eb33591fe766e151199b",
+  "deployer": "0xe7F550Af3Ec1f29BE257e5Fe93C7bD43707D6bc0",
+  "executor": "0x67D3c04919e625EC5ab74C84C107DbE031cc83f9",
+  "owner": "0xe7F550Af3Ec1f29BE257e5Fe93C7bD43707D6bc0",
+  "pendingOwner": "0xe8D212F886109cbf01e8294E3640a6Fb05544ff3",
+  "policyModule": "0xA453BC37e9A063a07b506Ffe3a24427A9bDecDA0",
+  "timestamp": 1785780639,
+  "vaultAdapters": [
+    "0x6719661f5114B31C2E9a0744eB4C52Ae0312B8A2"
+  ],
+  "vaultAddresses": [
+    "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"
+  ],
+  "vaultCanDeposit": [
+    true
+  ],
+  "vaultCanRedeem": [
+    true
+  ],
+  "vaultKinds": [
+    "aave"
+  ]
+}

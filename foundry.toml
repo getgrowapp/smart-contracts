@@ -38,9 +38,11 @@ fail_on_revert = false
 
 [rpc_endpoints]
 base = "${BASE_RPC_URL}"
+ethereum = "${ETH_RPC_URL}"
 
 [etherscan]
 base = { key = "${BASESCAN_API_KEY}" }
+ethereum = { key = "${ETHERSCAN_API_KEY}" }
 
 [fmt]
 line_length = 100

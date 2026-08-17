@@ -1,0 +1,58 @@
+{
+  "executor": {
+    "maxLossBps": 50,
+    "riskGuardian": "0x91E633eBF851800D5b1553E99398AffD8d942B2d"
+  },
+  "registry": {
+    "owner": "0xe8D212F886109cbf01e8294E3640a6Fb05544ff3",
+    "registrars": {
+      "aavePool": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+      "aaveDataProvider": "0x0a16f2FCC0D44FaE41cc54e079281D84A363bECD",
+      "morphoVaultFactory": "0xA1D94F746dEfa1928926b84fB2596c06926C0405",
+      "morphoAdapterFactory": "0xD1B8E2dee25c2b89DCD2f98448a7ce87d6F63394",
+      "morphoEligibility": "0xb24A247e04eC2cd3B9Cc36632F5e5C294D58A46f"
+    }
+  },
+  "policyModule": {
+    "maxVerificationGas": 500000,
+    "maxCallGas": 4000000,
+    "maxPreVerificationGas": 500000,
+    "maxPaymasterVerificationGas": 200000,
+    "maxPaymasterPostOpGas": 200000,
+    "maxPriorityFeePerGas": 2000000000,
+    "maxFeePerGas": 50000000000
+  },
+  "salts": {
+    "executor": "0x0000000000000000000000000000000000000000000000000000000000000041",
+    "policyModule": "0x0000000000000000000000000000000000000000000000000000000000000042",
+    "morphoEligibility": "0x000000000000000000000000000000000000000000000000000000000000001f"
+  },
+  "adapters": {
+    "aave": "0x0000000000000000000000000000000000000000000000000000000000000030",
+    "morpho": "0x0000000000000000000000000000000000000000000000000000000000000031"
+  },
+  "morphoEligibilityChildren": [
+    "0xbeeffABcd0dB09589Dd21854aa760C52aB4bf04F"
+  ],
+  "vaults": {
+    "aave": [
+      {
+        "vault": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "canDeposit": true,
+        "canRedeem": true
+      }
+    ],
+    "morpho": [
+      {
+        "vault": "0xD630B23E4ee8b938616F01C2Ce1834BE108712B9",
+        "canDeposit": true,
+        "canRedeem": true
+      },
+      {
+        "vault": "0x83c098Adb750C121399932433C07dE9950a03F77",
+        "canDeposit": true,
+        "canRedeem": true
+      }
+    ]
+  }
+}

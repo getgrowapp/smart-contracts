@@ -1,0 +1,36 @@
+{
+  "adapterAddresses": [
+    "0xaff8CDa7a9E3cD2F1D5B9F39D51dCc6C4B36Ffac"
+  ],
+  "adapterKinds": [
+    "morpho"
+  ],
+  "chainId": 137,
+  "commitSha": "0424bc49c17df69a4848eb33591fe766e151199b",
+  "deployer": "0xe7F550Af3Ec1f29BE257e5Fe93C7bD43707D6bc0",
+  "executor": "0x51b3e8c539B50BA69A5af170BD11b92eA7Ab9633",
+  "owner": "0xe7F550Af3Ec1f29BE257e5Fe93C7bD43707D6bc0",
+  "pendingOwner": "0xe8D212F886109cbf01e8294E3640a6Fb05544ff3",
+  "policyModule": "0xA453BC37e9A063a07b506Ffe3a24427A9bDecDA0",
+  "timestamp": 1785778547,
+  "vaultAdapters": [
+    "0xaff8CDa7a9E3cD2F1D5B9F39D51dCc6C4B36Ffac",
+    "0xaff8CDa7a9E3cD2F1D5B9F39D51dCc6C4B36Ffac"
+  ],
+  "vaultAddresses": [
+    "0xD32F56DbBC4aA3dd6E955C4c2ffB0c9DBa368D89",
+    "0x393b108b89604667B34a7d2D625F9bB3EB550c36"
+  ],
+  "vaultCanDeposit": [
+    true,
+    true
+  ],
+  "vaultCanRedeem": [
+    true,
+    true
+  ],
+  "vaultKinds": [
+    "morpho",
+    "morpho"
+  ]
+}

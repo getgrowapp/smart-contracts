@@ -25,6 +25,7 @@ cp .env.example .env
 
 ```sh
 GIT_COMMIT=$(git rev-parse HEAD) ./script/deploy-production-base.sh
+GIT_COMMIT=$(git rev-parse HEAD) ./script/deploy-production-ethereum.sh
 ```
 
 Or directly:
