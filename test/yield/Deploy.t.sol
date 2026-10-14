@@ -172,7 +172,8 @@ contract DeployTest is Test {
                     morphoEligibility: address(0),
                     eulerEVaultFactory: address(0),
                     eulerEarnFactory: address(0),
-                    capyFiComptroller: address(0)
+                    capyFiComptroller: address(0),
+                    aaveV4Hub: address(0)
                 })
             )
         );

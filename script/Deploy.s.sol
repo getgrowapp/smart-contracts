@@ -8,6 +8,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {GrowYieldExecutor} from "../src/GrowYieldExecutor.sol";
 import {GrowYieldPlugin} from "../src/GrowYieldPlugin.sol";
 import {AaveV3Adapter} from "../src/adapters/AaveV3Adapter.sol";
+import {AaveV4SpokeAdapter} from "../src/adapters/AaveV4SpokeAdapter.sol";
 import {CapyFiAdapter} from "../src/adapters/CapyFiAdapter.sol";
 import {EulerEarnAdapter} from "../src/adapters/EulerEarnAdapter.sol";
 import {EulerEVaultAdapter} from "../src/adapters/EulerEVaultAdapter.sol";
@@ -52,7 +53,7 @@ contract Deploy is Script {
     bytes32 internal constant DEPLOYER_SALT = bytes32(0);
 
     /// @dev Number of `Protocol` enum members.
-    uint256 internal constant PROTOCOL_COUNT = 5;
+    uint256 internal constant PROTOCOL_COUNT = 6;
 
     /// @notice One venue entry under `.vaults.<protocol>`.
     struct VaultCfg {
@@ -186,6 +187,7 @@ contract Deploy is Script {
         r.eulerEVaultFactory = _optionalAddress(config, ".registry.registrars.eulerEVaultFactory");
         r.eulerEarnFactory = _optionalAddress(config, ".registry.registrars.eulerEarnFactory");
         r.capyFiComptroller = _optionalAddress(config, ".registry.registrars.capyFiComptroller");
+        r.aaveV4Hub = _optionalAddress(config, ".registry.registrars.aaveV4Hub");
     }
 
     /// @dev Builds one adapter per protocol that has both a configured salt and pinned
@@ -263,9 +265,15 @@ contract Deploy is Script {
                 type(EulerEarnAdapter).creationCode, abi.encode(r.eulerEarnFactory, executor)
             );
         }
-        if (r.capyFiComptroller == address(0)) return bytes("");
+        if (protocol == Protocol.CAPYFI) {
+            if (r.capyFiComptroller == address(0)) return bytes("");
+            return abi.encodePacked(
+                type(CapyFiAdapter).creationCode, abi.encode(executor, r.capyFiComptroller)
+            );
+        }
+        if (r.aaveV4Hub == address(0)) return bytes("");
         return abi.encodePacked(
-            type(CapyFiAdapter).creationCode, abi.encode(executor, r.capyFiComptroller)
+            type(AaveV4SpokeAdapter).creationCode, abi.encode(r.aaveV4Hub, executor)
         );
     }
 
@@ -379,8 +387,7 @@ contract Deploy is Script {
                 "venue asset drift"
             );
             require(
-                venue.positionToken
-                    == IYieldAdapter(expected.adapter).positionToken(expected.vault),
+                venue.positionToken == IYieldAdapter(expected.adapter).positionToken(expected.vault),
                 "venue position drift"
             );
         }
@@ -413,7 +420,8 @@ contract Deploy is Script {
         if (protocol == Protocol.MORPHO) return "morpho";
         if (protocol == Protocol.EULER_EVK) return "eulerEVault";
         if (protocol == Protocol.EULER_EARN) return "eulerEarn";
-        return "capyfi";
+        if (protocol == Protocol.CAPYFI) return "capyfi";
+        return "aaveV4";
     }
 
     function _logPlan(

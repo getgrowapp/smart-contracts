@@ -19,8 +19,7 @@ import {
 } from "../../src/interfaces/IGrowYieldExecutor.sol";
 import {IYieldAdapter} from "../../src/interfaces/IYieldAdapter.sol";
 import {
-    IGrowYieldAdapterRegistry,
-    Protocol
+    IGrowYieldAdapterRegistry, Protocol
 } from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {MockAToken, MockAavePool, MockUnderlying} from "../invariant/MockYieldVenues.sol";
 import {MockFeeToken, MockMutableAaveDataProvider} from "./mocks/MockVaultV2Stack.sol";
@@ -657,7 +656,8 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
                 morphoEligibility: address(0),
                 eulerEVaultFactory: address(0),
                 eulerEarnFactory: address(0),
-                capyFiComptroller: address(0)
+                capyFiComptroller: address(0),
+                aaveV4Hub: address(0)
             })
         );
         AaveV3Adapter feeAdapter = new AaveV3Adapter(

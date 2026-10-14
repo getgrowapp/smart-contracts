@@ -6,8 +6,13 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
+import {AaveV4ReserveVenue} from "./AaveV4ReserveVenue.sol";
 import {GrowYieldAdapterRegistry} from "./GrowYieldAdapterRegistry.sol";
-import {IGrowYieldAdapterRegistry, Venue} from "./interfaces/IGrowYieldAdapterRegistry.sol";
+import {IAaveV4SpokeAdapter} from "./interfaces/IAaveV4SpokeAdapter.sol";
+import {IGrowYieldAccountCall} from "./interfaces/IGrowYieldAccountCall.sol";
+import {
+    IGrowYieldAdapterRegistry, Protocol, Venue
+} from "./interfaces/IGrowYieldAdapterRegistry.sol";
 import {
     AmountMode,
     IGrowYieldExecutor,
@@ -162,14 +167,22 @@ contract GrowYieldExecutor is
         // A proxy is not covered — its own code never changes when the implementation does.
         if (venue.adapter.codehash != venue.adapterCodeHash) revert AdapterCodeChanged();
 
+        if (_protocols[vault] == Protocol.AAVE_V4) {
+            return _runAaveV4(
+                op, venue, isDeposit, previousOutputToken, previousOutputAmount, hasPreviousOutput
+            );
+        }
+
         IYieldAdapter adapter = IYieldAdapter(venue.adapter);
         // The admitted pair is the only binding between this vault and its tokens, so re-deriving
         // it fails closed when protocol governance re-points a venue after admission. Deposits
         // only: blocking a redemption on drift would trap the account in the bad venue.
         if (
             isDeposit
-                && (adapter.asset(vault) != venue.asset
-                    || adapter.positionToken(vault) != venue.positionToken)
+                && (
+                    adapter.asset(vault) != venue.asset
+                        || adapter.positionToken(vault) != venue.positionToken
+                )
         ) revert VenueDrift();
 
         (IERC20 sourceToken, IERC20 outputToken) = isDeposit
@@ -221,6 +234,122 @@ contract GrowYieldExecutor is
         if (receivedOut < minimumOut) revert InsufficientOutput();
 
         emit Executed(msg.sender, vault, venue.adapter, op.kind, sent, receivedOut);
+    }
+
+    /// @dev Aave V4 keeps supply shares on the spoke. The account calls the spoke, so the spoke's
+    ///      caller is the account. Deposit output is the share increase. Redeem input is shares
+    ///      and output is underlying paid to the account. A spoke the hub no longer lists fails
+    ///      closed on deposit. Redeem still asks the hub to remove. The hub itself rejects an
+    ///      inactive or halted spoke, and the spoke rejects a withdraw that would break the
+    ///      account's health factor, which is what holds a position that is backing a borrow.
+    function _runAaveV4(
+        Operation calldata op,
+        Venue memory venue,
+        bool isDeposit,
+        address previousOutputToken,
+        uint256 previousOutputAmount,
+        bool hasPreviousOutput
+    ) private returns (uint256 receivedOut, address outputTokenAddress) {
+        address vault = op.vault;
+        IAaveV4SpokeAdapter adapter = IAaveV4SpokeAdapter(venue.adapter);
+        if (adapter.executor() != address(this)) revert Invalid();
+        if (
+            isDeposit
+                && (
+                    !adapter.spokeListed(vault) || adapter.asset(vault) != venue.asset
+                        || adapter.positionToken(vault) != venue.positionToken
+                )
+        ) revert VenueDrift();
+
+        address expectedSource = isDeposit ? venue.asset : venue.positionToken;
+        if (op.sourceToken != expectedSource) revert SourceTokenMismatch();
+        if (op.minAmountOut == 0) revert InsufficientOutput();
+        outputTokenAddress = isDeposit ? venue.positionToken : venue.asset;
+
+        IERC20 underlying = IERC20(venue.asset);
+        uint256 amount = isDeposit
+            ? _resolveAmount(
+                op, underlying, previousOutputToken, previousOutputAmount, hasPreviousOutput
+            )
+            : _resolveAaveV4Shares(
+                op, adapter, vault, previousOutputToken, previousOutputAmount, hasPreviousOutput
+            );
+        if (amount == 0) revert NoBalance();
+
+        uint256 sharesBefore = adapter.suppliedShares(vault, msg.sender);
+        uint256 adapterSharesBefore = adapter.suppliedShares(vault, venue.adapter);
+        uint256 adapterUnderlyingBefore = underlying.balanceOf(venue.adapter);
+        uint256 userUnderlyingBefore = underlying.balanceOf(msg.sender);
+        address spoke = AaveV4ReserveVenue(vault).spoke();
+        uint256 reserveId = AaveV4ReserveVenue(vault).reserveId();
+        IGrowYieldAccountCall account = IGrowYieldAccountCall(msg.sender);
+
+        uint256 expected;
+        if (isDeposit) {
+            expected = adapter.previewDeposit(vault, amount);
+            if (expected == 0) revert InsufficientOutput();
+            account.supplyOnSpoke(spoke, reserveId, amount);
+            account.setSpokeCollateral(spoke, reserveId, true);
+            uint256 spent = userUnderlyingBefore - underlying.balanceOf(msg.sender);
+            if (spent + 1 < amount || spent > amount + 1) revert UnsupportedToken();
+        } else {
+            expected = adapter.previewRedeem(vault, amount);
+            if (expected == 0) revert InsufficientOutput();
+            account.withdrawOnSpoke(
+                spoke, reserveId, amount == sharesBefore ? type(uint256).max : expected
+            );
+            if (adapter.suppliedShares(vault, msg.sender) == 0) {
+                account.setSpokeCollateral(spoke, reserveId, false);
+            }
+        }
+
+        uint256 adapterUnderlyingAfter = underlying.balanceOf(venue.adapter);
+        if (
+            adapterUnderlyingAfter + 1 < adapterUnderlyingBefore
+                || adapterUnderlyingAfter > adapterUnderlyingBefore + 1
+                || adapter.suppliedShares(vault, venue.adapter) != adapterSharesBefore
+        ) revert ResidualBalance();
+
+        if (isDeposit) {
+            uint256 sharesAfter = adapter.suppliedShares(vault, msg.sender);
+            if (sharesAfter < sharesBefore) revert InsufficientOutput();
+            receivedOut = sharesAfter - sharesBefore;
+        } else {
+            uint256 userUnderlyingAfter = underlying.balanceOf(msg.sender);
+            if (userUnderlyingAfter < userUnderlyingBefore) revert InsufficientOutput();
+            receivedOut = userUnderlyingAfter - userUnderlyingBefore;
+        }
+
+        uint256 previewMinimum = Math.mulDiv(expected, BPS - maxLossBps, BPS, Math.Rounding.Ceil);
+        uint256 minimumOut = Math.max(previewMinimum, op.minAmountOut);
+        if (receivedOut < minimumOut) revert InsufficientOutput();
+
+        emit Executed(msg.sender, vault, venue.adapter, op.kind, amount, receivedOut);
+    }
+
+    /// @dev Redeem amounts are spoke shares. `FULL_BALANCE` reads the caller's share balance,
+    ///      because the position token is only the venue id.
+    function _resolveAaveV4Shares(
+        Operation calldata op,
+        IAaveV4SpokeAdapter adapter,
+        address vault,
+        address previousOutputToken,
+        uint256 previousOutputAmount,
+        bool hasPreviousOutput
+    ) private view returns (uint256) {
+        if (op.amountMode == AmountMode.EXACT) {
+            if (op.amount == 0) revert InvalidAmountMode();
+            return op.amount;
+        }
+        if (op.amount != 0) revert InvalidAmountMode();
+        if (op.amountMode == AmountMode.FULL_BALANCE) {
+            return adapter.suppliedShares(vault, msg.sender);
+        }
+        if (
+            op.amountMode != AmountMode.PREVIOUS_OUTPUT || !hasPreviousOutput
+                || previousOutputToken != op.sourceToken
+        ) revert InvalidAmountMode();
+        return previousOutputAmount;
     }
 
     /// @dev Keeps the two authorities disjoint. Reads `owner()` rather than a constructor

@@ -16,8 +16,7 @@ import {IEulerEarnFactory} from "../../src/interfaces/IEulerEarnFactory.sol";
 import {IEulerEVaultFactory} from "../../src/interfaces/IEulerEVaultFactory.sol";
 import {AmountMode, Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
 import {
-    IGrowYieldAdapterRegistry,
-    Protocol
+    IGrowYieldAdapterRegistry, Protocol
 } from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 
 /// @notice Optional Base mainnet fork coverage for Euler EVK, Euler Earn, and CapyFi.
@@ -240,7 +239,11 @@ contract GrowYieldEulerCapyFiForkTest is Test {
     }
 
     /// @dev The live Euler and CapyFi registrars this suite pins.
-    function _forkRegistrars() internal pure returns (IGrowYieldAdapterRegistry.Registrars memory) {
+    function _forkRegistrars()
+        internal
+        pure
+        returns (IGrowYieldAdapterRegistry.Registrars memory)
+    {
         return IGrowYieldAdapterRegistry.Registrars({
             aavePool: address(0),
             aaveDataProvider: address(0),
@@ -249,7 +252,8 @@ contract GrowYieldEulerCapyFiForkTest is Test {
             morphoEligibility: address(0),
             eulerEVaultFactory: EVAULT_FACTORY,
             eulerEarnFactory: EARN_FACTORY,
-            capyFiComptroller: CAPY_COMPTROLLER
+            capyFiComptroller: CAPY_COMPTROLLER,
+            aaveV4Hub: address(0)
         });
     }
 }

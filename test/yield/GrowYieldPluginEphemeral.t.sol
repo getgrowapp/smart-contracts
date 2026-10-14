@@ -171,11 +171,77 @@ contract GrowYieldPluginEphemeralTest is GrowYieldTestBase {
         policyModule.executeGrowYield(makeAddr("wrongExecutor"), hex"deadbeef");
     }
 
+    function test_supplyOnSpoke_rejectsCallWithoutExecutorHook() public {
+        vm.prank(account);
+        vm.expectRevert(IGrowYieldPolicyModule.UnauthorizedExecutor.selector);
+        policyModule.supplyOnSpoke(makeAddr("spoke"), 0, 1);
+    }
+
+    function test_supplyOnSpoke_rejectsUnadmittedSpokeAfterHook() public {
+        vm.startPrank(account);
+        _callUint8PreHook(address(executor));
+        vm.expectRevert(GrowYieldPlugin.SpokeNotAdmitted.selector);
+        policyModule.supplyOnSpoke(makeAddr("spoke"), 0, 1);
+        vm.stopPrank();
+    }
+
+    function test_preExecutionHook_rejectsCallerOtherThanExecutor() public {
+        address stranger = makeAddr("stranger");
+        vm.startPrank(account);
+        (bool ok, bytes memory ret) = address(policyModule).call(
+            abi.encodeWithSelector(
+                bytes4(keccak256("preExecutionHook(uint8,address,uint256,bytes)")),
+                policyModule.SPOKE_CALL_FUNCTION_ID(),
+                stranger,
+                uint256(0),
+                bytes("")
+            )
+        );
+        assertFalse(ok);
+        assertEq(bytes4(ret), IGrowYieldPolicyModule.UnauthorizedExecutor.selector);
+        vm.stopPrank();
+    }
+
+    function test_spokeCalls_rejectUninstalledAccount() public {
+        address stranger = makeAddr("stranger");
+        vm.prank(stranger);
+        vm.expectRevert(IGrowYieldPolicyModule.PolicyNotInstalled.selector);
+        policyModule.supplyOnSpoke(makeAddr("spoke"), 0, 1);
+    }
+
+    function test_runtimeValidation_allowsOnlyTheExecutor() public {
+        uint8 functionId = policyModule.SPOKE_CALL_FUNCTION_ID();
+
+        vm.prank(account);
+        policyModule.runtimeValidationFunction(functionId, address(executor), 0, "");
+
+        vm.prank(account);
+        vm.expectRevert(IGrowYieldPolicyModule.UnauthorizedExecutor.selector);
+        policyModule.runtimeValidationFunction(functionId, makeAddr("stranger"), 0, "");
+    }
+
     function test_execution_rejectsUninstalledAccount() public {
         address stranger = makeAddr("stranger");
         vm.prank(stranger);
         vm.expectRevert(IGrowYieldPolicyModule.PolicyNotInstalled.selector);
         policyModule.executeGrowYield(address(executor), hex"deadbeef");
+    }
+
+    function _callUint8PreHook(address sender) internal {
+        (bool ok, bytes memory ret) = address(policyModule).call(
+            abi.encodeWithSelector(
+                bytes4(keccak256("preExecutionHook(uint8,address,uint256,bytes)")),
+                policyModule.SPOKE_CALL_FUNCTION_ID(),
+                sender,
+                uint256(0),
+                bytes("")
+            )
+        );
+        if (!ok) {
+            assembly {
+                revert(add(ret, 32), mload(ret))
+            }
+        }
     }
 
     function _mscaUserOp(bytes memory callData, bytes32 userOpHash)

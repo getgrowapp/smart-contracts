@@ -3,18 +3,15 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {
-    Call,
-    IModularAccount
+    Call, IModularAccount
 } from "@erc6900/reference-implementation/interfaces/IModularAccount.sol";
-import {
-    PackedUserOperation
-} from "@eth-infinitism/account-abstraction/interfaces/PackedUserOperation.sol";
+import {PackedUserOperation} from
+    "@eth-infinitism/account-abstraction/interfaces/PackedUserOperation.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IVaultV2} from "vault-v2/interfaces/IVaultV2.sol";
 import {IVaultV2Factory} from "vault-v2/interfaces/IVaultV2Factory.sol";
-import {
-    IMorphoVaultV1AdapterFactory
-} from "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
+import {IMorphoVaultV1AdapterFactory} from
+    "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
 
 import {GrowYieldPlugin} from "../../src/GrowYieldPlugin.sol";
 import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
@@ -37,10 +34,7 @@ import {
 } from "../../src/interfaces/IGrowYieldExecutor.sol";
 import {IYieldAdapter} from "../../src/interfaces/IYieldAdapter.sol";
 import {
-    MockAToken,
-    MockAavePool,
-    MockUnderlying,
-    MockVault
+    MockAToken, MockAavePool, MockUnderlying, MockVault
 } from "../invariant/MockYieldVenues.sol";
 import {
     MockEligibility,
@@ -163,7 +157,11 @@ abstract contract GrowYieldTestBase is Test {
     }
 
     /// @dev The mock Aave and Morpho registrars; every other protocol is unsupported here.
-    function _mockRegistrars() internal view returns (IGrowYieldAdapterRegistry.Registrars memory) {
+    function _mockRegistrars()
+        internal
+        view
+        returns (IGrowYieldAdapterRegistry.Registrars memory)
+    {
         return IGrowYieldAdapterRegistry.Registrars({
             aavePool: address(aavePool),
             aaveDataProvider: address(aaveDataProvider),
@@ -172,7 +170,8 @@ abstract contract GrowYieldTestBase is Test {
             morphoEligibility: address(morphoEligibility),
             eulerEVaultFactory: address(0),
             eulerEarnFactory: address(0),
-            capyFiComptroller: address(0)
+            capyFiComptroller: address(0),
+            aaveV4Hub: address(0)
         });
     }
 

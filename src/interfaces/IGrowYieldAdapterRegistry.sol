@@ -9,7 +9,8 @@ enum Protocol {
     MORPHO,
     EULER_EVK,
     EULER_EARN,
-    CAPYFI
+    CAPYFI,
+    AAVE_V4
 }
 
 /// @notice Everything the executor needs to run an operation against an admitted venue.
@@ -20,7 +21,8 @@ enum Protocol {
 /// @param adapterCodeHash Adapter runtime code hash pinned when it first admitted a venue,
 ///        carried here so resolving a venue costs one call instead of two.
 /// @param asset Underlying token pinned for this venue at admission.
-/// @param positionToken Position token pinned for this venue at admission.
+/// @param positionToken Position token pinned for this venue at admission. Aave V4 has no
+///        position token; the pinned value is the reserve venue, and balances are spoke shares.
 /// @param canDeposit Whether new deposits may be routed into this venue.
 /// @param canRedeem Whether redemptions may be routed out of this venue.
 struct Venue {
@@ -47,6 +49,8 @@ interface IGrowYieldAdapterRegistry {
     /// @param eulerEVaultFactory EVK GenericFactory that must have created the EVault proxy.
     /// @param eulerEarnFactory EulerEarnFactory that must have created the Earn vault.
     /// @param capyFiComptroller CapyFi Comptroller that must list the caToken market.
+    /// @param aaveV4Hub Aave V4 hub that must list every admitted spoke. A new hub needs a new
+    ///        registry. Another spoke on this hub is another venue.
     struct Registrars {
         address aavePool;
         address aaveDataProvider;
@@ -56,6 +60,7 @@ interface IGrowYieldAdapterRegistry {
         address eulerEVaultFactory;
         address eulerEarnFactory;
         address capyFiComptroller;
+        address aaveV4Hub;
     }
 
     /// @notice One venue admission request.
@@ -136,4 +141,19 @@ interface IGrowYieldAdapterRegistry {
 
     /// @notice Venue at `index` in admission order.
     function vaultAt(uint256 index) external view returns (address);
+
+    /// @notice Emitted when the registry deploys the canonical id contract for one Aave V4 reserve.
+    event AaveV4ReserveVenueDeployed(
+        address indexed venue, address indexed spoke, uint256 reserveId
+    );
+
+    /// @notice Deploy the canonical venue id for `(spoke, reserveId)`.
+    /// @dev Owner only. The address is CREATE2 from this registry, which is what admission checks.
+    ///      The hub must already be pinned. Deploying does not admit the venue.
+    function deployAaveV4ReserveVenue(address spoke, uint256 reserveId)
+        external
+        returns (address venue);
+
+    /// @notice CREATE2 address of the venue id for `(spoke, reserveId)`, deployed or not.
+    function aaveV4ReserveVenue(address spoke, uint256 reserveId) external view returns (address);
 }

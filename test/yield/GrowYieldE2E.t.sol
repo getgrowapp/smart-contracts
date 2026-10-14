@@ -2,37 +2,36 @@
 pragma solidity ^0.8.26;
 
 import {IEntryPoint} from "@eth-infinitism/account-abstraction/interfaces/IEntryPoint.sol";
-import {
-    PackedUserOperation
-} from "@eth-infinitism/account-abstraction/interfaces/PackedUserOperation.sol";
+import {PackedUserOperation} from
+    "@eth-infinitism/account-abstraction/interfaces/PackedUserOperation.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 import {
-    Call,
-    IModularAccount
+    Call, IModularAccount
 } from "@erc6900/reference-implementation/interfaces/IModularAccount.sol";
-import {
-    ValidationConfigLib
-} from "@erc6900/reference-implementation/libraries/ValidationConfigLib.sol";
+import {ValidationConfigLib} from
+    "@erc6900/reference-implementation/libraries/ValidationConfigLib.sol";
+import {DIRECT_CALL_VALIDATION_ENTITY_ID} from
+    "@erc6900/reference-implementation/helpers/Constants.sol";
 import {EntryPointUtils} from "../../lib/reference-implementation/test/utils/EntryPointUtils.sol";
 import {ModularAccount} from "@alchemy/modular-account/account/ModularAccount.sol";
-import {
-    ExecutionInstallDelegate
-} from "@alchemy/modular-account/helpers/ExecutionInstallDelegate.sol";
+import {ExecutionLib} from "@alchemy/modular-account/libraries/ExecutionLib.sol";
+import {ExecutionInstallDelegate} from
+    "@alchemy/modular-account/helpers/ExecutionInstallDelegate.sol";
+import {IGrowYieldAccountCall} from "../../src/interfaces/IGrowYieldAccountCall.sol";
 
 import {GrowYieldTestBase} from "./GrowYieldTestBase.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
 import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
+import {GrowYieldPlugin} from "../../src/GrowYieldPlugin.sol";
 import {
-    IGrowYieldAdapterRegistry,
-    Protocol
+    IGrowYieldAdapterRegistry, Protocol
 } from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
-import {
-    AlchemySingleSignerValidationModuleHarness
-} from "./mocks/AlchemySingleSignerValidationModuleHarness.sol";
+import {AlchemySingleSignerValidationModuleHarness} from
+    "./mocks/AlchemySingleSignerValidationModuleHarness.sol";
 import {MockSponsorPaymaster} from "./mocks/MockSponsorPaymaster.sol";
 
 /// @notice Complete EntryPoint v0.7 lifecycle against Alchemy Modular Account v2.0.1.
@@ -61,7 +60,8 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
         ownerValidationModule = new AlchemySingleSignerValidationModuleHarness();
         ExecutionInstallDelegate executionInstallDelegate = new ExecutionInstallDelegate();
         modularAccount = ModularAccount(
-            payable(address(
+            payable(
+                address(
                     new ERC1967Proxy(
                         address(new ModularAccount(entryPoint, executionInstallDelegate)),
                         abi.encodeCall(
@@ -80,7 +80,8 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
                             )
                         )
                     )
-                ))
+                )
+            )
         );
         account = address(modularAccount);
 
@@ -123,6 +124,19 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
         assertEq(underlying.balanceOf(account), 400e6);
         assertEq(morphoWrapper.balanceOf(account), 600e6);
         _assertBatchHygiene();
+    }
+
+    /// @dev The executor reaches the spoke function. A stranger does not.
+    function test_e2e_executorReachesSpokeCall() public {
+        _installPolicy();
+
+        vm.prank(makeAddr("stranger"));
+        vm.expectPartialRevert(ExecutionLib.PreExecHookReverted.selector);
+        IGrowYieldAccountCall(account).supplyOnSpoke(makeAddr("spoke"), 0, 1);
+
+        vm.prank(address(executor));
+        vm.expectRevert(GrowYieldPlugin.SpokeNotAdmitted.selector);
+        IGrowYieldAccountCall(account).supplyOnSpoke(makeAddr("spoke"), 0, 1);
     }
 
     function test_e2e_nonceKeysSelectOwnerAndGrowEntities() public view {
@@ -305,7 +319,34 @@ contract GrowYieldE2ETest is GrowYieldTestBase, EntryPointUtils {
                 )
             )
         );
+        _installSpokeExecution();
         _grantStandingAllowances();
+    }
+
+    /// @dev Lets the plugin call `execute` for the spoke, and registers the three spoke selectors
+    ///      with the hook that admits only this account's executor.
+    function _installSpokeExecution() internal {
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = IModularAccount.execute.selector;
+        _runOwnerUserOp(
+            abi.encodeCall(
+                IModularAccount.installValidation,
+                (
+                    ValidationConfigLib.pack(
+                        address(policyModule), DIRECT_CALL_VALIDATION_ENTITY_ID, false, false, false
+                    ),
+                    selectors,
+                    "",
+                    new bytes[](0)
+                )
+            )
+        );
+        _runOwnerUserOp(
+            abi.encodeCall(
+                IModularAccount.installExecution,
+                (address(policyModule), policyModule.executionManifest(), "")
+            )
+        );
     }
 
     /// @dev The owner grants the executor a standing allowance once. It is not exploitable:
