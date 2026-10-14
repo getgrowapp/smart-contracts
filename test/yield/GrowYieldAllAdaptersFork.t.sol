@@ -7,9 +7,8 @@ import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {IVaultV2} from "vault-v2/interfaces/IVaultV2.sol";
 import {IVaultV2Factory} from "vault-v2/interfaces/IVaultV2Factory.sol";
 import {IMorphoVaultV1Adapter} from "vault-v2/adapters/interfaces/IMorphoVaultV1Adapter.sol";
-import {
-    IMorphoVaultV1AdapterFactory
-} from "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
+import {IMorphoVaultV1AdapterFactory} from
+    "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
 
 import {GrowYieldAdapterRegistry} from "../../src/GrowYieldAdapterRegistry.sol";
 import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
@@ -27,8 +26,7 @@ import {IEulerEVaultFactory} from "../../src/interfaces/IEulerEVaultFactory.sol"
 import {IMorphoVaultEligibility} from "../../src/interfaces/IMorphoVaultEligibility.sol";
 import {AmountMode, Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
 import {
-    IGrowYieldAdapterRegistry,
-    Protocol
+    IGrowYieldAdapterRegistry, Protocol
 } from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {IYieldAdapter} from "../../src/interfaces/IYieldAdapter.sol";
 
@@ -61,8 +59,7 @@ contract GrowYieldAllAdaptersForkTest is Test {
     address internal constant AAVE_USDC = 0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB;
 
     address internal constant MORPHO_VAULT_V2_FACTORY = 0x4501125508079A99ebBebCE205DeC9593C2b5857;
-    address internal constant MORPHO_V1_ADAPTER_FACTORY =
-        0xF42D9c36b34c9c2CF3Bc30eD2a52a90eEB604642;
+    address internal constant MORPHO_V1_ADAPTER_FACTORY = 0xF42D9c36b34c9c2CF3Bc30eD2a52a90eEB604642;
     address internal constant MORPHO_USDC_WRAPPER = 0xAB03BABdb85C80a77808dD6b2B3ce280cc225014;
 
     address internal constant EULER_EVAULT_FACTORY = 0x7F321498A801A191a93C840750ed637149dDf8D0;
@@ -126,7 +123,11 @@ contract GrowYieldAllAdaptersForkTest is Test {
         // Aave's venue is its reserve asset; every other protocol's venue is its share token.
         vaults = [USDC, MORPHO_USDC_WRAPPER, EULER_EVAULT_USDC, EULER_EARN_USDC, CAPY_USDC];
         Protocol[5] memory protocols = [
-            Protocol.AAVE, Protocol.MORPHO, Protocol.EULER_EVK, Protocol.EULER_EARN, Protocol.CAPYFI
+            Protocol.AAVE,
+            Protocol.MORPHO,
+            Protocol.EULER_EVK,
+            Protocol.EULER_EARN,
+            Protocol.CAPYFI
         ];
 
         IGrowYieldAdapterRegistry.VaultConfig[] memory configs =
@@ -145,8 +146,9 @@ contract GrowYieldAllAdaptersForkTest is Test {
         // Admission is the whole enablement: the account only approves its tokens.
         vm.startPrank(account);
         for (uint256 i; i < 5; ++i) {
-            IERC20(executor.venue(vaults[i]).positionToken)
-                .approve(address(executor), type(uint256).max);
+            IERC20(executor.venue(vaults[i]).positionToken).approve(
+                address(executor), type(uint256).max
+            );
         }
         IERC20(USDC).approve(address(executor), type(uint256).max);
         vm.stopPrank();
@@ -166,7 +168,8 @@ contract GrowYieldAllAdaptersForkTest is Test {
             morphoEligibility: eligibility,
             eulerEVaultFactory: EULER_EVAULT_FACTORY,
             eulerEarnFactory: EULER_EARN_FACTORY,
-            capyFiComptroller: CAPY_COMPTROLLER
+            capyFiComptroller: CAPY_COMPTROLLER,
+            aaveV4Hub: address(0)
         });
     }
 
@@ -184,8 +187,9 @@ contract GrowYieldAllAdaptersForkTest is Test {
         assertEq(wrapper.adaptersLength(), 1);
         assertEq(wrapper.adapters(0), liquidityAdapter);
         assertTrue(
-            IMorphoVaultV1AdapterFactory(MORPHO_V1_ADAPTER_FACTORY)
-                .isMorphoVaultV1Adapter(liquidityAdapter)
+            IMorphoVaultV1AdapterFactory(MORPHO_V1_ADAPTER_FACTORY).isMorphoVaultV1Adapter(
+                liquidityAdapter
+            )
         );
         assertEq(IMorphoVaultV1Adapter(liquidityAdapter).parentVault(), address(wrapper));
         assertEq(IERC4626(IMorphoVaultV1Adapter(liquidityAdapter).morphoVaultV1()).asset(), USDC);

@@ -105,7 +105,8 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
             morphoEligibility: address(morphoEligibility),
             eulerEVaultFactory: address(evkFactory),
             eulerEarnFactory: address(earnFactory),
-            capyFiComptroller: address(capyMarket.comptroller())
+            capyFiComptroller: address(capyMarket.comptroller()),
+            aaveV4Hub: address(0)
         });
     }
 
@@ -227,7 +228,11 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
     ///      forces a redeployment to support a new protocol.
     function test_unsupportedProtocol_perZeroedRegistrar() public {
         Protocol[5] memory protocols = [
-            Protocol.AAVE, Protocol.MORPHO, Protocol.EULER_EVK, Protocol.EULER_EARN, Protocol.CAPYFI
+            Protocol.AAVE,
+            Protocol.MORPHO,
+            Protocol.EULER_EVK,
+            Protocol.EULER_EARN,
+            Protocol.CAPYFI
         ];
         address[5] memory venues = [aaveVault, morphoVault, evaultVault, earnVaultAddr, capyVault];
 

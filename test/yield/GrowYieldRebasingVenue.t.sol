@@ -9,8 +9,7 @@ import {AaveV3Adapter} from "../../src/adapters/AaveV3Adapter.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
 import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {
-    IGrowYieldAdapterRegistry,
-    Protocol
+    IGrowYieldAdapterRegistry, Protocol
 } from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {
     AmountMode,
@@ -70,7 +69,8 @@ contract GrowYieldRebasingVenueTest is Test {
                 morphoEligibility: address(0),
                 eulerEVaultFactory: address(0),
                 eulerEarnFactory: address(0),
-                capyFiComptroller: address(0)
+                capyFiComptroller: address(0),
+                aaveV4Hub: address(0)
             })
         );
         adapter = new AaveV3Adapter(

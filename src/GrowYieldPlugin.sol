@@ -1,15 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.36;
 
-import {
-    PackedUserOperation
-} from "@eth-infinitism/account-abstraction/interfaces/PackedUserOperation.sol";
+import {PackedUserOperation} from
+    "@eth-infinitism/account-abstraction/interfaces/PackedUserOperation.sol";
 import {_packValidationData} from "@eth-infinitism/account-abstraction/core/Helpers.sol";
 import {UserOperationLib} from "@eth-infinitism/account-abstraction/core/UserOperationLib.sol";
-import {
-    IValidationModule
-} from "@erc6900/reference-implementation/interfaces/IValidationModule.sol";
+import {IValidationModule} from "@erc6900/reference-implementation/interfaces/IValidationModule.sol";
 import {IModule} from "@erc6900/reference-implementation/interfaces/IModule.sol";
+import {IExecutionHookModule} from
+    "@erc6900/reference-implementation/interfaces/IExecutionHookModule.sol";
+import {
+    ExecutionManifest,
+    IExecutionModule,
+    ManifestExecutionFunction as Erc6900ExecutionFunction,
+    ManifestExecutionHook as Erc6900ExecutionHook
+} from "@erc6900/reference-implementation/interfaces/IExecutionModule.sol";
+import {IModularAccount} from "@erc6900/reference-implementation/interfaces/IModularAccount.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
@@ -18,6 +25,7 @@ import {
     ManifestFunction,
     ManifestAssociatedFunctionType,
     ManifestAssociatedFunction,
+    ManifestExecutionHook,
     PluginManifest,
     PluginMetadata,
     IPlugin
@@ -27,7 +35,12 @@ import {IStandardExecutor} from "@alchemy/msca/interfaces/IStandardExecutor.sol"
 import {SIG_VALIDATION_PASSED, SIG_VALIDATION_FAILED} from "@alchemy/msca/libraries/Constants.sol";
 import {BasePlugin} from "@alchemy/msca/plugins/BasePlugin.sol";
 
+import {AaveV4ReserveVenue} from "./AaveV4ReserveVenue.sol";
+import {IAaveV4Spoke} from "./interfaces/IAaveV4Spoke.sol";
+import {IAaveV4SpokeAdapter} from "./interfaces/IAaveV4SpokeAdapter.sol";
+import {IGrowYieldAccountCall} from "./interfaces/IGrowYieldAccountCall.sol";
 import {IGrowYieldExecutor, Operation} from "./interfaces/IGrowYieldExecutor.sol";
+import {Protocol, Venue} from "./interfaces/IGrowYieldAdapterRegistry.sol";
 import {IGrowYieldPolicyModule} from "./interfaces/IGrowYieldPolicyModule.sol";
 import {GrowYieldPluginEphemeralLib} from "./GrowYieldPluginEphemeralLib.sol";
 import {GrowYieldPolicyLib} from "./GrowYieldPolicyLib.sol";
@@ -35,7 +48,14 @@ import {GrowYieldPolicyLib} from "./GrowYieldPolicyLib.sol";
 /// @title GrowYieldPlugin
 /// @notice MSCA plugin and ERC-6900 validation module for policy-owner-authorized yield operations.
 /// @custom:security-contact security@getgrowapp.co
-contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
+contract GrowYieldPlugin is
+    IGrowYieldPolicyModule,
+    IGrowYieldAccountCall,
+    IExecutionModule,
+    IExecutionHookModule,
+    BasePlugin,
+    EIP712
+{
     using UserOperationLib for PackedUserOperation;
 
     uint256 private constant SIGNATURE_LENGTH = 65;
@@ -49,6 +69,21 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         keccak256("GrowYieldAuthorization(bytes32 userOpHash)");
 
     uint8 public constant MAX_OWNERS = 8;
+
+    /// @notice Routes validation for the spoke calls the executor asks the account to make.
+    uint8 public constant SPOKE_CALL_FUNCTION_ID = 1;
+
+    /// @notice Entity id of the ERC-6900 pre-exec hook on the three spoke selectors.
+    uint32 public constant SPOKE_HOOK_ENTITY_ID = 1;
+
+    error SpokeApprovalFailed();
+    /// @notice The spoke and reserve are not an Aave V4 venue this account's executor has admitted.
+    error SpokeNotAdmitted();
+
+    /// @dev Set by the pre-execution hook when the caller is the account's executor, then consumed
+    ///      by the spoke call. `executeFromPlugin` skips runtime validation, and a direct call to
+    ///      this plugin skips both. Neither leaves this set.
+    address private transient _spokeCaller;
 
     uint128 public immutable maxVerificationGas;
     uint128 public immutable maxCallGas;
@@ -107,6 +142,87 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
     {
         _requireApprovedExecutor(executor);
         return GrowYieldPluginEphemeralLib.executeWithEphemeralAllowance(executor, ops);
+    }
+
+    /// @inheritdoc IGrowYieldAccountCall
+    /// @dev `msg.sender` is the account. The account calls the spoke, so Aave sees the account.
+    ///      The approved token is the asset pinned at admission.
+    function supplyOnSpoke(address spoke, uint256 reserveId, uint256 amount) external {
+        address account = msg.sender;
+        Venue memory admitted = _admittedSpoke(spoke, reserveId, true);
+        _approveFromAccount(account, admitted.asset, spoke, amount);
+        _callFromAccount(
+            account, spoke, abi.encodeCall(IAaveV4Spoke.supply, (reserveId, amount, account))
+        );
+        _approveFromAccount(account, admitted.asset, spoke, 0);
+    }
+
+    /// @inheritdoc IGrowYieldAccountCall
+    function withdrawOnSpoke(address spoke, uint256 reserveId, uint256 amount) external {
+        address account = msg.sender;
+        _admittedSpoke(spoke, reserveId, false);
+        _callFromAccount(
+            account, spoke, abi.encodeCall(IAaveV4Spoke.withdraw, (reserveId, amount, account))
+        );
+    }
+
+    /// @inheritdoc IGrowYieldAccountCall
+    function setSpokeCollateral(address spoke, uint256 reserveId, bool usingAsCollateral)
+        external
+    {
+        address account = msg.sender;
+        _admittedSpoke(spoke, reserveId, usingAsCollateral);
+        _callFromAccount(
+            account,
+            spoke,
+            abi.encodeCall(
+                IAaveV4Spoke.setUsingAsCollateral, (reserveId, usingAsCollateral, account)
+            )
+        );
+    }
+
+    /// @inheritdoc BasePlugin
+    function runtimeValidationFunction(uint8 functionId, address sender, uint256, bytes calldata)
+        external
+        view
+        override
+    {
+        if (functionId != SPOKE_CALL_FUNCTION_ID) revert NotImplemented(msg.sig, functionId);
+        _requireSpokeCaller(sender);
+    }
+
+    /// @inheritdoc BasePlugin
+    /// @dev Runs for a direct call and for `executeFromPlugin`. Runtime validation does not run
+    ///      on the latter, so this is the check that rejects every caller except the executor.
+    function preExecutionHook(uint8 functionId, address sender, uint256, bytes calldata)
+        external
+        override
+        returns (bytes memory)
+    {
+        if (functionId != SPOKE_CALL_FUNCTION_ID) revert NotImplemented(msg.sig, functionId);
+        _requireSpokeCaller(sender);
+        _spokeCaller = msg.sender;
+        return "";
+    }
+
+    /// @dev Modular Account v2 calls this overload. `sender` is the original caller. The account
+    ///      is `msg.sender`. The executor is not a validation module, so the selectors are
+    ///      installed as public and this hook is what rejects every other caller.
+    function preExecutionHook(uint32 entityId, address sender, uint256, bytes calldata)
+        external
+        override
+        returns (bytes memory)
+    {
+        if (entityId != SPOKE_HOOK_ENTITY_ID) revert InvalidConfiguration();
+        _requireSpokeCaller(sender);
+        _spokeCaller = msg.sender;
+        return "";
+    }
+
+    /// @dev The spoke manifest installs no post hook. A post hook would run after the spoke call
+    ///      and could not undo it, so one is refused.
+    function postExecutionHook(uint32, bytes calldata) external pure override {
+        revert InvalidConfiguration();
     }
 
     function addOwner(address owner) external {
@@ -216,9 +332,8 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         returns (bool)
     {
         address accountExecutor_ = _accountConfigs[account].executor;
-        return
-            accountExecutor_ != address(0)
-                && GrowYieldPolicyLib.isAllowed(accountExecutor_, callData);
+        return accountExecutor_ != address(0)
+            && GrowYieldPolicyLib.isAllowed(accountExecutor_, callData);
     }
 
     function validateRuntime(address, uint32, address, uint256, bytes calldata, bytes calldata)
@@ -274,8 +389,7 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         if (
             _accountConfigs[account].entityId == 0 || userOp.signature.length != SIGNATURE_LENGTH
                 || userOp.initCode.length != 0 || userOp.verificationGasLimit > maxVerificationGas
-                || userOp.callGasLimit > maxCallGas
-                || userOp.preVerificationGas > maxPreVerificationGas
+                || userOp.callGasLimit > maxCallGas || userOp.preVerificationGas > maxPreVerificationGas
                 || userOp.maxPriorityFeePerGas > maxPriorityFeePerGas
                 || userOp.maxFeePerGas > maxFeePerGas
                 || !_legacyPaymasterPolicyAllows(account, userOp.paymasterAndData)
@@ -295,13 +409,18 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         manifest.dependencyInterfaceIds[0] = type(IPlugin).interfaceId;
         manifest.dependencyInterfaceIds[1] = type(IPlugin).interfaceId;
 
-        manifest.executionFunctions = new bytes4[](2);
+        manifest.executionFunctions = new bytes4[](5);
         manifest.executionFunctions[0] = GrowYieldPlugin.executeGrowYield.selector;
         manifest.executionFunctions[1] =
-        GrowYieldPlugin.executeGrowYieldWithEphemeralAllowance.selector;
+            GrowYieldPlugin.executeGrowYieldWithEphemeralAllowance.selector;
+        manifest.executionFunctions[2] = GrowYieldPlugin.supplyOnSpoke.selector;
+        manifest.executionFunctions[3] = GrowYieldPlugin.withdrawOnSpoke.selector;
+        manifest.executionFunctions[4] = GrowYieldPlugin.setSpokeCollateral.selector;
 
         ManifestFunction memory policyValidation = ManifestFunction({
-            functionType: ManifestAssociatedFunctionType.SELF, functionId: 0, dependencyIndex: 0
+            functionType: ManifestAssociatedFunctionType.SELF,
+            functionId: 0,
+            dependencyIndex: 0
         });
         ManifestFunction memory denyRuntime = ManifestFunction({
             functionType: ManifestAssociatedFunctionType.PRE_HOOK_ALWAYS_DENY,
@@ -319,6 +438,47 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
             associatedFunction: policyValidation
         });
 
+        ManifestFunction memory spokeCallValidation = ManifestFunction({
+            functionType: ManifestAssociatedFunctionType.SELF,
+            functionId: SPOKE_CALL_FUNCTION_ID,
+            dependencyIndex: 0
+        });
+        manifest.runtimeValidationFunctions = new ManifestAssociatedFunction[](3);
+        manifest.runtimeValidationFunctions[0] = ManifestAssociatedFunction({
+            executionSelector: GrowYieldPlugin.supplyOnSpoke.selector,
+            associatedFunction: spokeCallValidation
+        });
+        manifest.runtimeValidationFunctions[1] = ManifestAssociatedFunction({
+            executionSelector: GrowYieldPlugin.withdrawOnSpoke.selector,
+            associatedFunction: spokeCallValidation
+        });
+        manifest.runtimeValidationFunctions[2] = ManifestAssociatedFunction({
+            executionSelector: GrowYieldPlugin.setSpokeCollateral.selector,
+            associatedFunction: spokeCallValidation
+        });
+
+        ManifestFunction memory noPostHook = ManifestFunction({
+            functionType: ManifestAssociatedFunctionType.NONE,
+            functionId: 0,
+            dependencyIndex: 0
+        });
+        manifest.executionHooks = new ManifestExecutionHook[](3);
+        manifest.executionHooks[0] = ManifestExecutionHook({
+            executionSelector: GrowYieldPlugin.supplyOnSpoke.selector,
+            preExecHook: spokeCallValidation,
+            postExecHook: noPostHook
+        });
+        manifest.executionHooks[1] = ManifestExecutionHook({
+            executionSelector: GrowYieldPlugin.withdrawOnSpoke.selector,
+            preExecHook: spokeCallValidation,
+            postExecHook: noPostHook
+        });
+        manifest.executionHooks[2] = ManifestExecutionHook({
+            executionSelector: GrowYieldPlugin.setSpokeCollateral.selector,
+            preExecHook: spokeCallValidation,
+            postExecHook: noPostHook
+        });
+
         manifest.preRuntimeValidationHooks = new ManifestAssociatedFunction[](2);
         manifest.preRuntimeValidationHooks[0] = ManifestAssociatedFunction({
             executionSelector: GrowYieldPlugin.executeGrowYield.selector,
@@ -330,6 +490,56 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         });
 
         manifest.permitAnyExternalAddress = true;
+    }
+
+    /// @notice Selectors a Modular Account v2 installs so the executor can ask the account to
+    ///         call an admitted spoke. `skipRuntimeValidation` is required because the executor
+    ///         is not a validation module. The pre-exec hook rejects every other caller, and the
+    ///         spoke functions still revert if that hook did not run.
+    function executionManifest()
+        external
+        pure
+        override
+        returns (ExecutionManifest memory manifest)
+    {
+        manifest.executionFunctions = new Erc6900ExecutionFunction[](3);
+        manifest.executionFunctions[0] = Erc6900ExecutionFunction({
+            executionSelector: GrowYieldPlugin.supplyOnSpoke.selector,
+            skipRuntimeValidation: true,
+            allowGlobalValidation: false
+        });
+        manifest.executionFunctions[1] = Erc6900ExecutionFunction({
+            executionSelector: GrowYieldPlugin.withdrawOnSpoke.selector,
+            skipRuntimeValidation: true,
+            allowGlobalValidation: false
+        });
+        manifest.executionFunctions[2] = Erc6900ExecutionFunction({
+            executionSelector: GrowYieldPlugin.setSpokeCollateral.selector,
+            skipRuntimeValidation: true,
+            allowGlobalValidation: false
+        });
+
+        manifest.executionHooks = new Erc6900ExecutionHook[](3);
+        manifest.executionHooks[0] = Erc6900ExecutionHook({
+            executionSelector: GrowYieldPlugin.supplyOnSpoke.selector,
+            entityId: SPOKE_HOOK_ENTITY_ID,
+            isPreHook: true,
+            isPostHook: false
+        });
+        manifest.executionHooks[1] = Erc6900ExecutionHook({
+            executionSelector: GrowYieldPlugin.withdrawOnSpoke.selector,
+            entityId: SPOKE_HOOK_ENTITY_ID,
+            isPreHook: true,
+            isPostHook: false
+        });
+        manifest.executionHooks[2] = Erc6900ExecutionHook({
+            executionSelector: GrowYieldPlugin.setSpokeCollateral.selector,
+            entityId: SPOKE_HOOK_ENTITY_ID,
+            isPreHook: true,
+            isPostHook: false
+        });
+
+        manifest.interfaceIds = new bytes4[](0);
     }
 
     function pluginMetadata() external pure override returns (PluginMetadata memory metadata) {
@@ -345,6 +555,8 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         returns (bool)
     {
         return interfaceId == type(IValidationModule).interfaceId
+            || interfaceId == type(IExecutionModule).interfaceId
+            || interfaceId == type(IExecutionHookModule).interfaceId
             || super.supportsInterface(interfaceId);
     }
 
@@ -402,6 +614,67 @@ contract GrowYieldPlugin is IGrowYieldPolicyModule, BasePlugin, EIP712 {
         accountConfig.paymaster = address(0);
         emit ExecutorSet(account, address(0));
         emit PaymasterSet(account, address(0));
+    }
+
+    function _requireSpokeCaller(address sender) private view {
+        address executor = _accountConfigs[msg.sender].executor;
+        if (executor == address(0)) revert PolicyNotInstalled();
+        if (sender != executor) revert UnauthorizedExecutor();
+    }
+
+    /// @dev Consumes the executor hook, then allows the call only for an admitted Aave V4 venue.
+    ///      `openingCollateral` is a deposit: it also requires an open deposit direction, an
+    ///      unpaused venue, and a spoke the hub still lists. Turning collateral off and
+    ///      withdrawing stay available after that listing view flips.
+    function _admittedSpoke(address spoke, uint256 reserveId, bool openingCollateral)
+        private
+        returns (Venue memory admitted)
+    {
+        address account = msg.sender;
+        address executor = _accountConfigs[account].executor;
+        if (executor == address(0)) revert PolicyNotInstalled();
+        if (_spokeCaller != account) revert UnauthorizedExecutor();
+        _spokeCaller = address(0);
+
+        IGrowYieldExecutor registry = IGrowYieldExecutor(executor);
+        address vault = registry.aaveV4ReserveVenue(spoke, reserveId);
+        admitted = registry.venue(vault);
+        IAaveV4SpokeAdapter adapter = IAaveV4SpokeAdapter(admitted.adapter);
+        if (
+            admitted.adapter == address(0) || registry.vaultProtocol(vault) != Protocol.AAVE_V4
+                || admitted.positionToken != vault || AaveV4ReserveVenue(vault).spoke() != spoke
+                || AaveV4ReserveVenue(vault).reserveId() != reserveId
+                || admitted.adapter.codehash != admitted.adapterCodeHash
+                || adapter.executor() != executor
+        ) revert SpokeNotAdmitted();
+
+        if (openingCollateral) {
+            if (!admitted.canDeposit) revert IGrowYieldExecutor.VenueNotAllowed();
+            if (registry.allDepositsPaused() || registry.depositsPaused(vault)) {
+                revert IGrowYieldExecutor.DepositsPaused();
+            }
+            if (!adapter.spokeListed(vault) || adapter.asset(vault) != admitted.asset) {
+                revert IGrowYieldExecutor.VenueDrift();
+            }
+        } else if (!admitted.canRedeem) {
+            revert IGrowYieldExecutor.VenueNotAllowed();
+        }
+    }
+
+    function _approveFromAccount(address account, address token, address spender, uint256 amount)
+        private
+    {
+        bytes memory ret =
+            _callFromAccount(account, token, abi.encodeCall(IERC20.approve, (spender, amount)));
+        if (ret.length != 0 && !abi.decode(ret, (bool))) revert SpokeApprovalFailed();
+    }
+
+    /// @dev The account performs the call. Aave therefore sees the account as `msg.sender`.
+    function _callFromAccount(address account, address target, bytes memory data)
+        private
+        returns (bytes memory)
+    {
+        return IModularAccount(account).execute(target, 0, data);
     }
 
     /// @dev UserOp validation is not the only way into an execution function: `executeFromPlugin`

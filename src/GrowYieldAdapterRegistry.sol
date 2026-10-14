@@ -4,24 +4,25 @@ pragma solidity 0.8.36;
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 
 import {IVaultV2} from "vault-v2/interfaces/IVaultV2.sol";
 import {IVaultV2Factory} from "vault-v2/interfaces/IVaultV2Factory.sol";
 import {IMorphoVaultV1Adapter} from "vault-v2/adapters/interfaces/IMorphoVaultV1Adapter.sol";
-import {
-    IMorphoVaultV1AdapterFactory
-} from "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
+import {IMorphoVaultV1AdapterFactory} from
+    "vault-v2/adapters/interfaces/IMorphoVaultV1AdapterFactory.sol";
 
+import {AaveV4ReserveVenue} from "./AaveV4ReserveVenue.sol";
 import {IAaveProtocolDataProvider} from "./interfaces/IAaveProtocolDataProvider.sol";
+import {IAaveV4Hub} from "./interfaces/IAaveV4Hub.sol";
+import {IAaveV4Spoke} from "./interfaces/IAaveV4Spoke.sol";
 import {IAdapterVenue} from "./interfaces/IAdapterVenue.sol";
 import {ICapyFiCaToken} from "./interfaces/ICapyFiCaToken.sol";
 import {ICapyFiComptroller} from "./interfaces/ICapyFiComptroller.sol";
 import {IEulerEarnFactory} from "./interfaces/IEulerEarnFactory.sol";
 import {IEulerEVaultFactory} from "./interfaces/IEulerEVaultFactory.sol";
 import {
-    IGrowYieldAdapterRegistry,
-    Protocol,
-    Venue
+    IGrowYieldAdapterRegistry, Protocol, Venue
 } from "./interfaces/IGrowYieldAdapterRegistry.sol";
 import {IMorphoVaultEligibility} from "./interfaces/IMorphoVaultEligibility.sol";
 import {IYieldAdapter} from "./interfaces/IYieldAdapter.sol";
@@ -74,10 +75,14 @@ abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterReg
     /// @notice CapyFi Comptroller that must list an admitted caToken market.
     address public immutable capyFiComptroller;
 
+    /// @notice Aave V4 hub that must list every admitted spoke. Zero means Aave V4 is unsupported.
+    address public immutable aaveV4Hub;
+
     /// @dev Read directly by the inherited execution path; `venue()` is the external view.
     mapping(address vault => Venue) internal _venues;
 
-    mapping(address vault => Protocol) private _protocols;
+    /// @dev Internal so the executor can measure Aave V4 shares instead of a position-token balance.
+    mapping(address vault => Protocol) internal _protocols;
 
     /// @dev Position tokens already claimed by an admitted venue, to reject duplicates.
     mapping(address positionToken => bool) private _positionClaimed;
@@ -110,6 +115,7 @@ abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterReg
         _requireContractOrUnset(registrars_.eulerEVaultFactory);
         _requireContractOrUnset(registrars_.eulerEarnFactory);
         _requireContractOrUnset(registrars_.capyFiComptroller);
+        _requireContractOrUnset(registrars_.aaveV4Hub);
 
         aavePool = registrars_.aavePool;
         aaveDataProvider = registrars_.aaveDataProvider;
@@ -119,6 +125,36 @@ abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterReg
         eulerEVaultFactory = registrars_.eulerEVaultFactory;
         eulerEarnFactory = registrars_.eulerEarnFactory;
         capyFiComptroller = registrars_.capyFiComptroller;
+        aaveV4Hub = registrars_.aaveV4Hub;
+    }
+
+    /// @inheritdoc IGrowYieldAdapterRegistry
+    function deployAaveV4ReserveVenue(address spoke, uint256 reserveId)
+        external
+        onlyOwner
+        returns (address deployed)
+    {
+        if (aaveV4Hub == address(0) || spoke.code.length == 0) revert Invalid();
+        deployed =
+            address(new AaveV4ReserveVenue{salt: _aaveV4Salt(spoke, reserveId)}(spoke, reserveId));
+        emit AaveV4ReserveVenueDeployed(deployed, spoke, reserveId);
+    }
+
+    /// @inheritdoc IGrowYieldAdapterRegistry
+    function aaveV4ReserveVenue(address spoke, uint256 reserveId) public view returns (address) {
+        return Create2.computeAddress(
+            _aaveV4Salt(spoke, reserveId),
+            keccak256(
+                abi.encodePacked(
+                    type(AaveV4ReserveVenue).creationCode, abi.encode(spoke, reserveId)
+                )
+            ),
+            address(this)
+        );
+    }
+
+    function _aaveV4Salt(address spoke, uint256 reserveId) private pure returns (bytes32) {
+        return keccak256(abi.encode(spoke, reserveId));
     }
 
     /// @inheritdoc IGrowYieldAdapterRegistry
@@ -246,10 +282,39 @@ abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterReg
             }
             if (!IEulerEarnFactory(factory).isVault(vault)) revert NotCanonicalVenue();
             _requireErc4626Venue(vault, asset, position);
-        } else {
-            // Protocol.CAPYFI: ABI decoding rejects any value outside the enum.
+        } else if (protocol == Protocol.CAPYFI) {
             _requireCanonicalCapyFi(adapter, vault, asset, position);
+        } else {
+            // Protocol.AAVE_V4: ABI decoding rejects any value outside the enum.
+            _requireCanonicalAaveV4(adapter, vault, asset, position);
         }
+    }
+
+    /// @dev The venue must be this registry's CREATE2 id for the spoke reserve, and that spoke
+    ///      must be listed on the pinned hub for the reserve's asset.
+    function _requireCanonicalAaveV4(
+        address adapter,
+        address vault,
+        address asset,
+        address position
+    ) private view {
+        address pinned = aaveV4Hub;
+        if (pinned == address(0)) revert UnsupportedProtocol();
+        if (_adapterWiring(adapter, IAdapterVenue.hub.selector) != pinned) {
+            revert RegistrarMismatch();
+        }
+
+        address spoke = AaveV4ReserveVenue(vault).spoke();
+        uint256 reserveId = AaveV4ReserveVenue(vault).reserveId();
+        if (vault != aaveV4ReserveVenue(spoke, reserveId) || position != vault) {
+            revert NotCanonicalVenue();
+        }
+
+        IAaveV4Spoke.Reserve memory reserve = IAaveV4Spoke(spoke).getReserve(reserveId);
+        if (
+            reserve.underlying != asset || address(reserve.hub) != pinned
+                || !IAaveV4Hub(pinned).isSpokeListed(reserve.assetId, spoke)
+        ) revert NotCanonicalVenue();
     }
 
     /// @dev Aave keys reserves by underlying asset, so the venue identifier is the asset and the
@@ -298,11 +363,10 @@ abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterReg
 
         address liquidityAdapter = wrapper.adapters(0);
         if (
-            !IMorphoVaultV1AdapterFactory(morphoAdapterFactory)
-                    .isMorphoVaultV1Adapter(liquidityAdapter)
-                || !wrapper.isAdapter(liquidityAdapter)
-                || wrapper.liquidityAdapter() != liquidityAdapter
-                || wrapper.liquidityData().length != 0
+            !IMorphoVaultV1AdapterFactory(morphoAdapterFactory).isMorphoVaultV1Adapter(
+                liquidityAdapter
+            ) || !wrapper.isAdapter(liquidityAdapter)
+                || wrapper.liquidityAdapter() != liquidityAdapter || wrapper.liquidityData().length != 0
         ) revert NotCanonicalVenue();
 
         IMorphoVaultV1Adapter morphoAdapter = IMorphoVaultV1Adapter(liquidityAdapter);

@@ -24,4 +24,7 @@ interface IAdapterVenue {
 
     /// @notice Morpho: the eligibility oracle gating a wrapper's VaultV1 child.
     function eligibility() external view returns (address);
+
+    /// @notice Aave V4: the hub that must list every spoke this adapter supplies to.
+    function hub() external view returns (address);
 }

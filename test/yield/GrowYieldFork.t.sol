@@ -11,8 +11,7 @@ import {IAaveV3Pool} from "../../src/interfaces/IAaveV3Pool.sol";
 import {IAaveProtocolDataProvider} from "../../src/interfaces/IAaveProtocolDataProvider.sol";
 import {AmountMode, Operation, OperationKind} from "../../src/interfaces/IGrowYieldExecutor.sol";
 import {
-    IGrowYieldAdapterRegistry,
-    Protocol
+    IGrowYieldAdapterRegistry, Protocol
 } from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 
 /// @dev Aave V3 address book root; resolves current pool + data provider on fork.
@@ -57,7 +56,8 @@ contract GrowYieldForkTest is Test {
                 morphoEligibility: address(0),
                 eulerEVaultFactory: address(0),
                 eulerEarnFactory: address(0),
-                capyFiComptroller: address(0)
+                capyFiComptroller: address(0),
+                aaveV4Hub: address(0)
             })
         );
 
@@ -68,9 +68,8 @@ contract GrowYieldForkTest is Test {
         );
         IGrowYieldAdapterRegistry.VaultConfig[] memory vaults =
             new IGrowYieldAdapterRegistry.VaultConfig[](1);
-        vaults[0] = IGrowYieldAdapterRegistry.VaultConfig(
-            address(adapter), USDC, Protocol.AAVE, true, true
-        );
+        vaults[0] =
+            IGrowYieldAdapterRegistry.VaultConfig(address(adapter), USDC, Protocol.AAVE, true, true);
         executor.addVaults(vaults);
     }
 

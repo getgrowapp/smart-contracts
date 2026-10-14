@@ -19,6 +19,7 @@ contract MockLeakyAdapter is IYieldAdapter, IAdapterVenue {
         STRAND_SOURCE, // keeps part of what it was sent instead of depositing it
         RETAIN_OUTPUT, // mints to itself rather than the receiver
         SWEEP_DONATION // redeems more than it was attributed
+
     }
 
     address public immutable executor;
@@ -31,6 +32,7 @@ contract MockLeakyAdapter is IYieldAdapter, IAdapterVenue {
     address public dataProvider;
     address public comptroller;
     address public eligibility;
+    address public hub;
 
     constructor(address executor_, address factory_) {
         executor = executor_;

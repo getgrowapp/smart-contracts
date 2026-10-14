@@ -6,8 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {GrowYieldExecutor} from "../../src/GrowYieldExecutor.sol";
 import {
-    IGrowYieldAdapterRegistry,
-    Protocol
+    IGrowYieldAdapterRegistry, Protocol
 } from "../../src/interfaces/IGrowYieldAdapterRegistry.sol";
 import {
     AmountMode,
@@ -55,7 +54,8 @@ contract GrowYieldExecutorResidualsTest is Test {
                 morphoEligibility: address(0),
                 eulerEVaultFactory: address(factory),
                 eulerEarnFactory: address(0),
-                capyFiComptroller: address(0)
+                capyFiComptroller: address(0),
+                aaveV4Hub: address(0)
             })
         );
         adapter = new MockLeakyAdapter(address(executor), address(factory));
