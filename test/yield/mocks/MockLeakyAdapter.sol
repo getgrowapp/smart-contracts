@@ -31,6 +31,7 @@ contract MockLeakyAdapter is IYieldAdapter, IAdapterVenue {
     address public dataProvider;
     address public comptroller;
     address public eligibility;
+    address public market;
 
     constructor(address executor_, address factory_) {
         executor = executor_;

@@ -657,7 +657,8 @@ contract GrowYieldExecutorTest is GrowYieldTestBase {
                 morphoEligibility: address(0),
                 eulerEVaultFactory: address(0),
                 eulerEarnFactory: address(0),
-                capyFiComptroller: address(0)
+                capyFiComptroller: address(0),
+                getEquityMarket: address(0)
             })
         );
         AaveV3Adapter feeAdapter = new AaveV3Adapter(

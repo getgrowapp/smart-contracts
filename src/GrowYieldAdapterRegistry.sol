@@ -74,6 +74,10 @@ abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterReg
     /// @notice CapyFi Comptroller that must list an admitted caToken market.
     address public immutable capyFiComptroller;
 
+    /// @notice GetEquity market the adapter buys and sells through.
+    ///         Zero means GetEquity is unsupported.
+    address public immutable getEquityMarket;
+
     /// @dev Read directly by the inherited execution path; `venue()` is the external view.
     mapping(address vault => Venue) internal _venues;
 
@@ -110,6 +114,7 @@ abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterReg
         _requireContractOrUnset(registrars_.eulerEVaultFactory);
         _requireContractOrUnset(registrars_.eulerEarnFactory);
         _requireContractOrUnset(registrars_.capyFiComptroller);
+        _requireContractOrUnset(registrars_.getEquityMarket);
 
         aavePool = registrars_.aavePool;
         aaveDataProvider = registrars_.aaveDataProvider;
@@ -119,6 +124,7 @@ abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterReg
         eulerEVaultFactory = registrars_.eulerEVaultFactory;
         eulerEarnFactory = registrars_.eulerEarnFactory;
         capyFiComptroller = registrars_.capyFiComptroller;
+        getEquityMarket = registrars_.getEquityMarket;
     }
 
     /// @inheritdoc IGrowYieldAdapterRegistry
@@ -246,10 +252,25 @@ abstract contract GrowYieldAdapterRegistry is Ownable2Step, IGrowYieldAdapterReg
             }
             if (!IEulerEarnFactory(factory).isVault(vault)) revert NotCanonicalVenue();
             _requireErc4626Venue(vault, asset, position);
-        } else {
-            // Protocol.CAPYFI: ABI decoding rejects any value outside the enum.
+        } else if (protocol == Protocol.CAPYFI) {
             _requireCanonicalCapyFi(adapter, vault, asset, position);
+        } else {
+            // Protocol.GETEQUITY: ABI decoding rejects any value outside the enum.
+            _requireCanonicalGetEquity(adapter, vault, position);
         }
+    }
+
+    /// @dev The venue is the inventory token. The adapter must point at this registry's market.
+    function _requireCanonicalGetEquity(address adapter, address vault, address position)
+        private
+        view
+    {
+        address pinned = getEquityMarket;
+        if (pinned == address(0)) revert UnsupportedProtocol();
+        if (_adapterWiring(adapter, IAdapterVenue.market.selector) != pinned) {
+            revert RegistrarMismatch();
+        }
+        if (position != vault) revert NotCanonicalVenue();
     }
 
     /// @dev Aave keys reserves by underlying asset, so the venue identifier is the asset and the

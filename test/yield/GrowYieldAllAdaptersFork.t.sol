@@ -166,7 +166,8 @@ contract GrowYieldAllAdaptersForkTest is Test {
             morphoEligibility: eligibility,
             eulerEVaultFactory: EULER_EVAULT_FACTORY,
             eulerEarnFactory: EULER_EARN_FACTORY,
-            capyFiComptroller: CAPY_COMPTROLLER
+            capyFiComptroller: CAPY_COMPTROLLER,
+            getEquityMarket: address(0)
         });
     }
 

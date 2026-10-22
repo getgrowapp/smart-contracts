@@ -52,7 +52,7 @@ contract Deploy is Script {
     bytes32 internal constant DEPLOYER_SALT = bytes32(0);
 
     /// @dev Number of `Protocol` enum members.
-    uint256 internal constant PROTOCOL_COUNT = 5;
+    uint256 internal constant PROTOCOL_COUNT = 6;
 
     /// @notice One venue entry under `.vaults.<protocol>`.
     struct VaultCfg {
@@ -186,6 +186,7 @@ contract Deploy is Script {
         r.eulerEVaultFactory = _optionalAddress(config, ".registry.registrars.eulerEVaultFactory");
         r.eulerEarnFactory = _optionalAddress(config, ".registry.registrars.eulerEarnFactory");
         r.capyFiComptroller = _optionalAddress(config, ".registry.registrars.capyFiComptroller");
+        r.getEquityMarket = _optionalAddress(config, ".registry.registrars.getEquityMarket");
     }
 
     /// @dev Builds one adapter per protocol that has both a configured salt and pinned
@@ -263,10 +264,14 @@ contract Deploy is Script {
                 type(EulerEarnAdapter).creationCode, abi.encode(r.eulerEarnFactory, executor)
             );
         }
-        if (r.capyFiComptroller == address(0)) return bytes("");
-        return abi.encodePacked(
-            type(CapyFiAdapter).creationCode, abi.encode(executor, r.capyFiComptroller)
-        );
+        if (protocol == Protocol.CAPYFI) {
+            if (r.capyFiComptroller == address(0)) return bytes("");
+            return abi.encodePacked(
+                type(CapyFiAdapter).creationCode, abi.encode(executor, r.capyFiComptroller)
+            );
+        }
+        // GetEquity is admitted on an executor this script does not deploy.
+        return bytes("");
     }
 
     /// @dev Flattens `.vaults.<protocol>` into admission entries bound to the protocol's adapter.
@@ -413,7 +418,8 @@ contract Deploy is Script {
         if (protocol == Protocol.MORPHO) return "morpho";
         if (protocol == Protocol.EULER_EVK) return "eulerEVault";
         if (protocol == Protocol.EULER_EARN) return "eulerEarn";
-        return "capyfi";
+        if (protocol == Protocol.CAPYFI) return "capyfi";
+        return "getEquity";
     }
 
     function _logPlan(

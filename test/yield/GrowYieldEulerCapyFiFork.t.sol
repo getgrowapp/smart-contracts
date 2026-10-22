@@ -249,7 +249,8 @@ contract GrowYieldEulerCapyFiForkTest is Test {
             morphoEligibility: address(0),
             eulerEVaultFactory: EVAULT_FACTORY,
             eulerEarnFactory: EARN_FACTORY,
-            capyFiComptroller: CAPY_COMPTROLLER
+            capyFiComptroller: CAPY_COMPTROLLER,
+            getEquityMarket: address(0)
         });
     }
 }
