@@ -55,7 +55,8 @@ contract GrowYieldExecutorResidualsTest is Test {
                 morphoEligibility: address(0),
                 eulerEVaultFactory: address(factory),
                 eulerEarnFactory: address(0),
-                capyFiComptroller: address(0)
+                capyFiComptroller: address(0),
+                getEquityMarket: address(0)
             })
         );
         adapter = new MockLeakyAdapter(address(executor), address(factory));

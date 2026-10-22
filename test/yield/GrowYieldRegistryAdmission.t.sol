@@ -105,7 +105,8 @@ contract GrowYieldRegistryAdmissionTest is GrowYieldTestBase {
             morphoEligibility: address(morphoEligibility),
             eulerEVaultFactory: address(evkFactory),
             eulerEarnFactory: address(earnFactory),
-            capyFiComptroller: address(capyMarket.comptroller())
+            capyFiComptroller: address(capyMarket.comptroller()),
+            getEquityMarket: address(0)
         });
     }
 

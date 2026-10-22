@@ -24,4 +24,7 @@ interface IAdapterVenue {
 
     /// @notice Morpho: the eligibility oracle gating a wrapper's VaultV1 child.
     function eligibility() external view returns (address);
+
+    /// @notice GetEquity: the market this adapter buys and sells through.
+    function market() external view returns (address);
 }

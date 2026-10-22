@@ -9,7 +9,8 @@ enum Protocol {
     MORPHO,
     EULER_EVK,
     EULER_EARN,
-    CAPYFI
+    CAPYFI,
+    GETEQUITY
 }
 
 /// @notice Everything the executor needs to run an operation against an admitted venue.
@@ -47,6 +48,8 @@ interface IGrowYieldAdapterRegistry {
     /// @param eulerEVaultFactory EVK GenericFactory that must have created the EVault proxy.
     /// @param eulerEarnFactory EulerEarnFactory that must have created the Earn vault.
     /// @param capyFiComptroller CapyFi Comptroller that must list the caToken market.
+    /// @param getEquityMarket GetEquity market the adapter buys and sells through. Zero means
+    ///        GetEquity is unsupported. Each listed token is another venue.
     struct Registrars {
         address aavePool;
         address aaveDataProvider;
@@ -56,6 +59,7 @@ interface IGrowYieldAdapterRegistry {
         address eulerEVaultFactory;
         address eulerEarnFactory;
         address capyFiComptroller;
+        address getEquityMarket;
     }
 
     /// @notice One venue admission request.

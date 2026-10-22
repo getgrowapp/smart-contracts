@@ -15,6 +15,7 @@ contract MockRogueVenueAdapter is IYieldAdapter, IAdapterVenue {
     address public dataProvider;
     address public comptroller;
     address public eligibility;
+    address public market;
     address public child;
     address public liquidityAdapter;
 
